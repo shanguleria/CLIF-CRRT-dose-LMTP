@@ -1,7 +1,7 @@
 {
     "site_name": "Your_Site_Name",
-    "tables_path": "/path/to/clif/tables/",
-    "file_type": "parquet",
+    "data_directory": "/path/to/clif/tables/",
+    "filetype": "parquet",
     "timezone": "America/Chicago",
     "project_root": "/path/to/CRRT-dose-lmtp",
     "output_dir": "output",

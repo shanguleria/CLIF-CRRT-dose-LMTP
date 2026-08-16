@@ -127,14 +127,21 @@ cp config/config_template.json config/config.json
 ```json
 {
     "site_name": "Your_Site_Name",
-    "tables_path": "/path/to/clif/tables/",
-    "file_type": "parquet",
+    "data_directory": "/path/to/clif/tables/",
+    "filetype": "parquet",
     "timezone": "America/Chicago",
     "project_root": "/path/to/CRRT-dose-lmtp",
     "output_dir": "output",
     "has_crrt_settings": true
 }
 ```
+
+`data_directory`, `filetype`, and `timezone` are named to match what `clifpy`
+expects, so one file serves both the library and this project's own code with no
+translation layer. The remaining keys are ours; clifpy ignores what it does not
+recognise. Note this differs from the sibling `CLIF-epidemiology-of-CRRT`, which
+calls the first two `tables_path` and `file_type`, so a config cannot be copied
+between the two repos unchanged.
 
 `config/config.json` is gitignored and never leaves your site.
 

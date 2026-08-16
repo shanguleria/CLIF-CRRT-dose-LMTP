@@ -19,6 +19,9 @@ the site) and output/final_no_phi/ (aggregate, shareable).
 """
 
 from __future__ import annotations
+import json
+from pathlib import Path
+from clifpy import CrrtTherapy
 
 # ---------------------------------------------------------------------------
 # Stage 0: What do we actually have?
@@ -36,7 +39,20 @@ def stage_0_inspect():
     Returns whatever you find useful to carry forward; at this stage printing is
     the point, so a return value is optional.
     """
-    raise NotImplementedError("Stage 0: see docs/clif_cohort_tutorial.md")
+    repo_root = Path(__file__).resolve().parent.parent
+    config = json.loads((repo_root / 
+                         "config" / 
+                         "config.json").read_text())
+    print(config)
+
+    crrt = CrrtTherapy.from_file(
+        data_directory=config["data_directory"],
+        filetype=config["filetype"],
+        timezone=config["timezone"],
+        output_directory=str(repo_root / "output"),
+    )
+    df = crrt.df
+    print(f"rows: {len(df):,}")
 
 
 # ---------------------------------------------------------------------------

@@ -6,8 +6,11 @@
     "The design decisions are encoded here rather than only in prose so that they are",
     "diffable, hashable, and readable by the build scripts. This file is the",
     "definition_version source for the provenance block stamped on every shareable",
-    "output. Changing a value here changes the estimand, so it must be a deliberate,",
-    "reviewed commit, never an incidental edit."
+    "output.",
+    "",
+    "TREAT THIS AS A PROTOCOL, NOT A TUNING FILE. Changing a value here changes what",
+    "is being estimated. It is not the place to make a failing run pass. Every edit",
+    "should be a deliberate, reviewed commit that also bumps definition_version."
   ],
 
   "exposure": {

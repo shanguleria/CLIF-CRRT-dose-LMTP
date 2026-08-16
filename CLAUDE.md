@@ -119,8 +119,8 @@ measured at 24h. Do not reproduce that.
 ## Repo conventions
 
 Read `.gitignore`'s header before adding a rule to it. This repo is **private**,
-so unlike the sibling consortium repo, **`.claude/`, `CLAUDE.md`, and `docs/` are
-tracked**. `.claude/lmtp_feasibility_findings.md` is the entire evidentiary basis
+so unlike the sibling consortium repo, **`.claude/` and `CLAUDE.md` are tracked**
+(as would be a `docs/`, when there is something to put in one). `.claude/lmtp_feasibility_findings.md` is the entire evidentiary basis
 for the project and previously existed as one untracked copy under a gitignored
 path; ignoring `.claude/` here would recreate that.
 

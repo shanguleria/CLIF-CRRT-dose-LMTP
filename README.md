@@ -244,7 +244,6 @@ CRRT-dose-lmtp/
 │   ├── clif_data_requirements.yaml
 │   └── outlier_config.json
 │
-├── docs/
 ├── output/
 │   ├── final_no_phi/             Shareable aggregates
 │   └── intermediate_phi/         Patient-level, never shared

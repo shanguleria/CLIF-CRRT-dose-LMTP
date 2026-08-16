@@ -67,8 +67,13 @@ renv/sandbox/
 
 # --- Editors / OS ------------------------------------------------------------
 .DS_Store
-.vscode/
 .idea/
+# .vscode is tracked only for the two files that make the repo work correctly
+# out of the box (interpreter path, recommended extensions). Personal settings
+# like launch.json stay local.
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 
 # --- Rendered artifacts ------------------------------------------------------
 # NOTE: deliberately NOT a blanket `*.pdf` / `*.html` ignore (the sibling repo

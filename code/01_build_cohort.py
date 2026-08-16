@@ -30,6 +30,16 @@ from clifpy import CrrtTherapy
 # ---------------------------------------------------------------------------
 
 def stage_0_inspect():
+    """Report the shape, modality mix, and completeness of clif_crrt_therapy.
+
+    Run before any cohort logic, because site-specific charting reality decides
+    which branches the later stages actually need. At the coordinating site this
+    established that the data is CVVHD-only, that both replacement-fluid columns
+    are entirely null, and that dialysate flow carries physiologically
+    impossible outliers. See docs/clif_cohort_tutorial.md, Stage 0.
+
+    Prints aggregates only; nothing here may show patient-level rows.
+    """
     repo_root = Path(__file__).resolve().parent.parent
     config = json.loads((repo_root / 
                          "config" / 
@@ -63,8 +73,11 @@ def stage_0_inspect():
         "post_filter_replacement_fluid_rate",
         "ultrafiltration_out",
     ]
+    # dropna=False so a null modality becomes a visible row rather than rows
+    # that silently vanish from the table. This site has none, but the script
+    # ships to ten of them.
     by_mode = (
-        df.groupby("crrt_mode_category")[flow_cols]
+        df.groupby("crrt_mode_category", dropna=False)[flow_cols]
         .apply(lambda g: g.isna().mean())
     )
     print(f"Missingness by Modality:\n{by_mode.T.round(3)}")

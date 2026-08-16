@@ -21,6 +21,8 @@ the site) and output/final_no_phi/ (aggregate, shareable).
 from __future__ import annotations
 import json
 from pathlib import Path
+
+import pandas as pd
 from clifpy import CrrtTherapy
 
 # ---------------------------------------------------------------------------
@@ -28,17 +30,6 @@ from clifpy import CrrtTherapy
 # ---------------------------------------------------------------------------
 
 def stage_0_inspect():
-    """Load clif_crrt_therapy and report its shape, modes, and completeness.
-
-    Answers, before any cohort logic is written:
-      1. rows, distinct hospitalizations, date range
-      2. crrt_mode_category distribution (counts and percentages)
-      3. missingness of the flow-rate columns, ideally broken down BY MODE
-      4. whether recorded_dttm carries a timezone
-
-    Returns whatever you find useful to carry forward; at this stage printing is
-    the point, so a return value is optional.
-    """
     repo_root = Path(__file__).resolve().parent.parent
     config = json.loads((repo_root / 
                          "config" / 
@@ -52,8 +43,33 @@ def stage_0_inspect():
         output_directory=str(repo_root / "output"),
     )
     df = crrt.df
-    print(f"rows: {len(df):,}")
 
+    # Exploring rows, hospitalizations, date ranges, time zone, modalities
+    print(f"rows: {len(df):,}")
+    print(f"distinct hospitalizations: {df['hospitalization_id'].nunique():,}")
+    print(f"date range: {df['recorded_dttm'].min()} to {df['recorded_dttm'].max()}")
+    print(f"recorded_dttm timezone: {df['recorded_dttm'].dtype}")
+
+    counts = df['crrt_mode_category'].value_counts(dropna=False)
+    pct = df['crrt_mode_category'].value_counts(dropna=False, normalize=True)*100
+    modes = pd.DataFrame({"n": counts, "pct": pct.round(1)})
+    print(f"CRRT modalities:\n{modes}")
+
+    # Missingness
+    flow_cols = [
+        "blood_flow_rate",
+        "dialysate_flow_rate",
+        "pre_filter_replacement_fluid_rate",
+        "post_filter_replacement_fluid_rate",
+        "ultrafiltration_out",
+    ]
+    by_mode = (
+        df.groupby("crrt_mode_category")[flow_cols]
+        .apply(lambda g: g.isna().mean())
+    )
+    print(f"Missingness by Modality:\n{by_mode.T.round(3)}")
+    print("Note that DFR will be missing for convective-only modalities \n"
+    "and fluid replacement will be missing from diffusive-only modalities")
 
 # ---------------------------------------------------------------------------
 # Stage 1: Adults and study years

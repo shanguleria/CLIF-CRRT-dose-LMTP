@@ -1,0 +1,60 @@
+[project]
+name = "crrt-dose-lmtp"
+version = "0.1.0"
+description = "Longitudinal modified treatment policies for time-varying CRRT dose across the CLIF consortium"
+readme = "README.md"
+# Pinned to 3.11 to match the sibling CLIF-epidemiology-of-CRRT runtime. The
+# cohort is vendored from that repo and must reproduce bit-for-bit, so the
+# interpreter is part of the contract, not a preference.
+requires-python = ">=3.11,<3.12"
+
+dependencies = [
+    # Exact pin. clifpy minor releases have changed CLIF datetime tz handling
+    # (0.5.0 broke tz math that 0.4.9 handled), which silently moves every
+    # windowed exposure node. Do not float this.
+    "clifpy==0.4.9",
+
+    # Compute stack, pinned to the versions the sibling repo resolved. These
+    # decide numbers, so they are exact for cross-site reproducibility.
+    "pandas==2.3.3",
+    "numpy==2.3.3",
+    # Declared explicitly rather than inherited transitively from clifpy: the
+    # node-construction code is Polars, so this repo owns the pin.
+    "polars==1.34.0",
+    "pyarrow==21.0.0",
+    "duckdb==1.4.1",
+    "scipy==1.16.2",
+    "scikit-learn==1.7.2",
+
+    # Presentation and utility. Floated deliberately: these do not change any
+    # estimate, and pinning them only creates resolution friction across sites.
+    "matplotlib>=3.6.0",
+    "seaborn>=0.12.0",
+    "pyyaml>=6.0",
+    "pytz>=2023.3",
+    "tqdm>=4.65.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "ipykernel>=6.25.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = []
+include-package-data = false
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"

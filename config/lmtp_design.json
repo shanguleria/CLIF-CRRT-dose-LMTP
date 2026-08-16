@@ -1,0 +1,87 @@
+{
+  "definition_version": "0.1.0-draft",
+  "status": "DRAFT. Not yet estimable: discontinuation_handling is unresolved (see below).",
+  "_source": "Recommendations of .claude/lmtp_feasibility_findings.md S4, feasibility audit 2026-08-15.",
+  "_why_this_file": [
+    "The design decisions are encoded here rather than only in prose so that they are",
+    "diffable, hashable, and readable by the build scripts. This file is the",
+    "definition_version source for the provenance block stamped on every shareable",
+    "output. Changing a value here changes the estimand, so it must be a deliberate,",
+    "reviewed commit, never an incidental edit."
+  ],
+
+  "exposure": {
+    "quantity": "delivered CRRT effluent dose",
+    "units": "mL/kg/hr",
+    "denominator": "actual body weight",
+    "node_statistic": "windowed_median",
+    "_node_statistic_why": "Matches crrt_dose_median_3h in the sibling pipeline. The archived MSM used windowed MEANS, which reintroduces the charting-lag artefact that the median exists to defuse.",
+    "_denominator_caveat": "A fixed delta is a different absolute effluent change in every patient, against a fluid-overloaded actual weight. Known to matter: actual-vs-IBW moves the >=30 share from 46% to 76%. Open question 4 in the findings.",
+    "_prescribed_vs_delivered": "This is DELIVERED dose. RENAL and ATN randomised PRESCRIPTION. A policy defined on delivered dose is not directly implementable; this is a stated limitation, and it is sharper for an intervention estimand than for an association."
+  },
+
+  "policy": {
+    "shift_form": "self_limiting_never_clamped",
+    "_formula": "d(a) = a - delta   if a - delta >= floor;   a   otherwise",
+    "_critical": "NEVER clamp to the floor. The lmtp package supplies no guard for this and will not warn. Clamping breaks the Assumption 5 invertibility condition. See fluid_ARDS/plans/lmtp_discussion.md S4.4 and S4.7.",
+    "delta_primary": 5,
+    "delta_ladder": [2.5, 5, 10],
+    "_delta_ladder_why": "The ladder IS the dose-response result; report all three rungs, not just the primary. delta=2.5 is universally clean (max binned density ratio 2.6-6.0, zero mass above ratio 10 at any site). delta=10 is the clinically vivid rung but is diluted at two low-dose sites (moves only 23% and 27% of patients) and unstable at the two tight-dosing sites (density ratios to 31.0, 17-70% of cohort above ratio 10). Keep it, with the honest caveat.",
+    "floor": 15,
+    "floor_sensitivity": 20,
+    "_floor_why": "floor=20 collapses policy coverage to 4% and 11% at the two lowest-dose sites at delta=10, and to 33%/23% even at delta=2.5/5 at one of them. Sensitivity rung only, never primary."
+  },
+
+  "time": {
+    "tau": 3,
+    "exposure_node_hours": [0, 24, 48],
+    "_tau_why": "Retention at 48h is >=38% at every one of the ten sites. A fourth node at 72h is viable at most sites but thin at one (27%). Do not go past tau=4.",
+    "outcome_horizon_days": 30,
+    "outcome_anchor": "CRRT initiation",
+    "outcome_grid_days": [3, 7, 14, 30],
+    "_outcome_grid_why": "Exposure runs to day 3 but follow-up runs to day 30. The outcome nodes must be coarsened or the T x T influence-function covariance becomes ill-conditioned at small sites. Verify lmtp v1.5.4 mechanics for tau_trt < tau_outcome before relying on this."
+  },
+
+  "outcome": {
+    "primary": "30-day in-hospital mortality",
+    "_definition": "In-hospital by construction: death is taken from discharge disposition (expired OR hospice), so post-discharge deaths are unobservable. Hospice counts as a death (2.7% at the coordinating site). death_dttm is missing for 37% of counted deaths and the last vital sign is the fallback timestamp, which can flip a patient across the 30-day boundary. ALL OF THIS MUST BE STATED EXPLICITLY IN ANY METHODS SECTION.",
+    "competing_event": "discharge_alive",
+    "_competing_event_how": "Via the lmtp `compete` argument. Matches the existing Fine-Gray CIFs in the sibling pipeline's script 05."
+  },
+
+  "estimation": {
+    "primary": "lmtp_sdr",
+    "secondary": "lmtp_tmle",
+    "diagnostics": ["lmtp_gcomp", "lmtp_ipw"],
+    "_why_sdr": "Diaz's own applied choice. See fluid_ARDS/plans/lmtp_discussion.md S6.3 for the real tradeoff against TMLE.",
+    "package": "lmtp",
+    "package_version_target": "1.5.4"
+  },
+
+  "site_admission": {
+    "rule": "band_occupancy_under_the_shift",
+    "_replaces": "The `high-dose arm < 100 patients` convention used by the point-treatment analysis, which excluded two sites.",
+    "_why": "Outcome-blind and pre-fit. It also readmits the two sites the old rule excluded: under an MTP their support is among the BEST in the consortium (1.3% and 0.4% unsupported; max density ratio 5.5 and 2.1). They are low-dose sites already near the floor, so they contribute little to the contrast, but excluding them was never the right description of that. This inversion is a reportable methodological point in its own right.",
+    "threshold": null,
+    "_threshold_todo": "Not yet specified. Must be fixed and committed BEFORE any pooled effect is estimated under it."
+  },
+
+  "cohort": {
+    "definition_source": "vendored 00_cohort.py @ ee4774b4d44f487a70c8e62a96f2a6ad88b9e604",
+    "_deliberately_identical": "The cohort is bit-identical to the sibling CJASN analysis by design. Two papers from the same consortium must not report two different Ns.",
+    "exclude_short_crrt": false,
+    "_exclude_short_crrt_why": "Dropped. It only ever existed because a point-treatment design needs 24h of therapy to define the exposure. LMTP handles early death structurally, so the exclusion is no longer motivated and would now induce selection."
+  },
+
+  "discontinuation_handling": null,
+  "_discontinuation_handling_BLOCKING": {
+    "status": "UNRESOLVED. This blocks the node schema, and therefore blocks 02_build_lmtp_df.py.",
+    "problem": "CRRT liberation is a third state that the feasibility audit did not resolve. The exposure is undefined once CRRT stops, and 39% of encounter blocks at the coordinating site have no A3 node.",
+    "options": {
+      "competing_event": "Treat liberation as a competing event alongside death and discharge.",
+      "carry_forward_zero": "Carry dose forward as 0. NOTE this silently changes the estimand to 'dose or no dose', which is a different scientific question.",
+      "while_on_therapy": "Define the policy only while the patient is on therapy."
+    },
+    "note": "These are three different estimands, not three implementations of one. Decide before building the dataset."
+  }
+}

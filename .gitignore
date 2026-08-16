@@ -1,0 +1,77 @@
+# =============================================================================
+# .gitignore for CRRT-dose-lmtp
+#
+# READ THIS BEFORE ADDING A RULE.
+#
+# This repo is PRIVATE, and that changes what belongs in git relative to the
+# sibling consortium repo (CLIF-epidemiology-of-CRRT), which is public-facing
+# and therefore ignores `.claude`, `CLAUDE.md`, and `docs/`.
+#
+# Here those three are TRACKED ON PURPOSE:
+#
+#   .claude/   holds the LMTP feasibility findings, which are the entire
+#              evidentiary basis for this project. They previously lived in
+#              the sibling repo under `code/adhoc/` -- a gitignored path --
+#              and so existed as exactly one untracked, unbacked-up copy.
+#              This repo exists partly to fix that. Ignoring `.claude/` here
+#              would silently recreate the problem.
+#   CLAUDE.md  carries the inherited design decisions; memory is path-keyed
+#              and does not follow the code, so this file is the durable copy.
+#   docs/      deliverables the author reads. Untracked docs get lost.
+#
+# Do not "sync" this file with the sibling's. They are answering different
+# questions. See CLAUDE.md > Repo conventions.
+# =============================================================================
+
+# --- Site configuration (never leaves the site) ------------------------------
+config/config.json
+config/config_*.json
+!config/config_template.json
+
+# --- Data: raw CLIF tables must never be committed ---------------------------
+CLIF_*.parquet
+CLIF_*.csv
+CLIF_*.fst
+*.RData
+
+# --- Outputs -----------------------------------------------------------------
+# Ignore output contents, keep the READMEs that explain the layout.
+output/**
+!output/README.md
+!output/final_no_phi/
+!output/final_no_phi/README.md
+!output/intermediate_phi/
+!output/intermediate_phi/README.md
+
+# --- Python ------------------------------------------------------------------
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# --- R / renv ----------------------------------------------------------------
+# Commit renv.lock, renv/activate.R and renv/settings.json; ignore only the
+# local library. .Rprofile is intentionally NOT ignored: it sources
+# renv/activate.R and must ship so every site uses the pinned library.
+renv/library/
+renv/local/
+renv/staging/
+renv/sandbox/
+.Rhistory
+.Ruserdata
+.Rproj.user/
+*.Rproj
+
+# --- Editors / OS ------------------------------------------------------------
+.DS_Store
+.vscode/
+.idea/
+
+# --- Rendered artifacts ------------------------------------------------------
+# NOTE: deliberately NOT a blanket `*.pdf` / `*.html` ignore (the sibling repo
+# has one). Figures and rendered reports are the product here, so only the
+# transient R plot dump is excluded.
+Rplots.pdf

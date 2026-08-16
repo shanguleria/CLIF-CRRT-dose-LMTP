@@ -1,0 +1,31 @@
+# Upstream pin for all vendored files.
+#
+# Every path below is copied VERBATIM from CLIF-epidemiology-of-CRRT at this
+# commit. tests/test_vendor_integrity.py asserts byte-equality against it, so
+# drift becomes a failing check rather than a silent divergence.
+#
+# To move the pin: change SHA, run code/vendor/sync_vendor.sh, run the tests,
+# and commit all of it together. Never edit a vendored file in place.
+
+SHA=ee4774b4d44f487a70c8e62a96f2a6ad88b9e604
+UPSTREAM_REPO=../../../CLIF-epidemiology-of-CRRT
+UPSTREAM_URL=https://github.com/shanguleria/CLIF-epidemiology-of-CRRT
+
+# --- Manifest: <upstream path> -> <path in this repo> ------------------------
+# Format: MANIFEST <upstream_path> <local_path>
+# Lines are read by sync_vendor.sh and by tests/test_vendor_integrity.py.
+
+# Not yet vendored. Uncomment as each file is pulled in; the integrity test
+# skips while this list is empty and activates the moment it is not.
+# See .claude/lmtp_feasibility_findings.md S6.2 for why these five and no others.
+
+# MANIFEST code/00_cohort.py           code/vendor/00_cohort.py
+# MANIFEST code/sofa_calculator.py     code/vendor/sofa_calculator.py
+# MANIFEST code/01_create_wide_df.py   code/vendor/01_create_wide_df.py
+# MANIFEST code/pipeline_helpers.py    code/vendor/pipeline_helpers.py
+# MANIFEST code/utils.py               code/vendor/utils.py
+
+# --- Already pinned (config, not code) ---------------------------------------
+# These were copied during the initial scaffold and ARE checked by the test.
+MANIFEST config/clif_data_requirements.yaml config/clif_data_requirements.yaml
+MANIFEST config/outlier_config.json         config/outlier_config.json

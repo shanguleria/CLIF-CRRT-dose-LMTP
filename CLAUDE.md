@@ -116,6 +116,34 @@ baseline block is coupled to the Table 1 script. More importantly, **`04`
 violates the `L_t -> A_t` ordering** by pairing a 0-24h mean dose with covariates
 measured at 24h. Do not reproduce that.
 
+## Protocol settings versus site settings
+
+Every configurable value belongs to exactly one of two files, and putting one in
+the wrong place is a scientific error rather than a tidiness problem.
+
+| | File | Contains | Differs by site? |
+|---|---|---|---|
+| **Site** | `config/config.json` | `data_directory`, `filetype`, `timezone`, `site_name`, `has_crrt_settings` | **Yes** |
+| **Protocol** | `config/lmtp_design.json` | delta ladder, floor, node schedule, study window, estimator, competing event, cohort rules | **No.** Identical everywhere |
+
+The test: **if two sites set this differently, is the pooled result still
+meaningful?** If no, it is protocol.
+
+Never hardcode a protocol value in a script. Scripts **read** from
+`lmtp_design.json`; they do not decide. A hardcoded constant is invisible to
+everyone who did not write it and was agreed by nobody.
+
+`lmtp_design.json` is the `definition_version` source stamped onto every
+shareable output, so any change to it is a protocol amendment that bumps the
+version and leaves earlier results identifiable.
+
+Worked example: the study window (2018-2024) is protocol, not a site preference.
+Calendar time confounds here, since CRRT practice and mortality moved through
+2020-2021; per-site windows would make between-site heterogeneity partly reflect
+*when* a site contributed. A site with shorter coverage still participates, and
+the cohort script reports its actual range so partial coverage is stated rather
+than silent.
+
 ## Repo conventions
 
 Read `.gitignore`'s header before adding a rule to it. This repo is **private**,

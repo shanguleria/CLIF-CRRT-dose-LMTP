@@ -70,8 +70,32 @@
   },
 
   "cohort": {
-    "definition_source": "vendored 00_cohort.py @ ee4774b4d44f487a70c8e62a96f2a6ad88b9e604",
-    "_deliberately_identical": "The cohort is bit-identical to the sibling CJASN analysis by design. Two papers from the same consortium must not report two different Ns.",
+    "definition_source": "code/01_build_cohort.py in this repo",
+    "_definition_source_history": "Originally planned as a verbatim vendoring of 00_cohort.py from CLIF-epidemiology-of-CRRT @ ee4774b. Changed 2026-08-16: that file is a converted Jupyter notebook (55 cells, ~900 lines of diagnostics, no callable API), and clifpy 0.4.9 already provides stitch_encounters, compute_sofa_polars, create_wide_dataset and apply_outlier_handling. Reimplemented lean on clifpy primitives instead.",
+    "_must_reconcile": "The cohort is intended to match the sibling CJASN analysis. Two papers from the same consortium must not report two different Ns without a stated reason. Because the logic is reimplemented rather than copied, equality is a CLAIM TO BE TESTED, not a fact: validate the encounter-block count and set against the sibling pipeline's output before reporting anything. Expected at the coordinating site: 2,136 encounter blocks.",
+
+    "study_year_start": 2018,
+    "study_year_end": 2024,
+    "_study_window_why": [
+      "PROTOCOL PARAMETER, identical at every site. Not a site preference and not",
+      "configurable in config.json.",
+      "",
+      "Calendar time is a confounder here: CRRT practice and mortality shifted",
+      "substantially through 2020-2021. If each site contributed whatever range it",
+      "happened to hold, the pooled estimate would be over a mixture of calendar",
+      "periods, between-site heterogeneity would partly reflect WHEN each site",
+      "contributed rather than how it practises, and the Methods section could not",
+      "state a single study period.",
+      "",
+      "Inherited from the sibling CJASN analysis (STUDY_YEAR_START / STUDY_YEAR_END",
+      "in its pipeline_helpers.py) so the two cohorts remain comparable.",
+      "",
+      "A site whose data does not span the full window still participates; it",
+      "contributes fewer encounters. 01_build_cohort.py REPORTS each site's actual",
+      "available range so partial coverage is visible rather than silent. Report",
+      "per-site coverage alongside the per-site estimate."
+    ],
+
     "exclude_short_crrt": false,
     "_exclude_short_crrt_why": "Dropped. It only ever existed because a point-treatment design needs 24h of therapy to define the exposure. LMTP handles early death structurally, so the exclusion is no longer motivated and would now induce selection."
   },

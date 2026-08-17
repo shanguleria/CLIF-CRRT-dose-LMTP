@@ -99,16 +99,37 @@ stage_0_inspect(crrt)
 # Stage 1: Adults and study years
 # ---------------------------------------------------------------------------
 # %%
-def stage_1_base_population():
-    """Restrict to adults (age >= 18) admitted within the study years."""
+def stage_1_base_population(hosp, crrt):
+    """Restrict to adults (age >= 18) admitted within the study years who received CRRT.
+    Returns the filtered hospitalization table and the STROBE count ladder
+    """
+    print(f"starting with {len(hosp):,} hospitalizations")
 
     strobe = []
-    strobe.append(("all hospitalizations", len(hosp)))
+    strobe.append(("all hospitalizations", len(hosp))) # Start with all hospitalizations
 
-    hosp = hosp[hosp["age at admission"] >= 18]
-    strobe.append(("adults (age >= 18)", len(hosp)))
+    hosp = hosp[hosp["age_at_admission"] >= 18]
+    strobe.append(("adults (age >= 18)", len(hosp))) # Filter for only adults over 18yo
 
-stage_1_base_population()
+    year = hosp["admission_dttm]"].dt.year
+    hosp = hosp[(year >= STUDY_YEAR_START) & (year <= STUDY_YEAR_END)]
+    strobe.append((f"admitted {STUDY_YEAR_START}-{STUDY_YEAR_END}", len(hosp))) # Filter for study years
+
+    crrt_ids = crrt["hospitalization_id"].unique()
+    hosp = hosp[hosp["hospitalization)id"].isin(crrt_ids)]
+    strobe.append(("received CRRT", len(hosp))) # Filter for only those hospitalizations with a CRRT record
+
+    years = hosp["admission_dttm"].dt.year
+    print(f"\nsite data covers {years.min()}-{years.max()} "
+          f"(protocol window {STUDY_YEAR_START}-{STUDY_YEAR_END})")
+
+    print("\nSTROBE ladder")
+    for label, n in strobe:
+        print(f"  {label:<34} {n:>9,}")
+
+    return hosp, strobe
+
+hosp_study, strobe = stage_1_base_population(hosp, crrt)
 
 # ---------------------------------------------------------------------------
 # Stage 2: CRRT encounters and the encounter block

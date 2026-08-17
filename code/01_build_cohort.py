@@ -157,15 +157,78 @@ strobe_1 = stage_1_base_population(hosp, crrt)
 # Stage 2: CRRT encounters and the encounter block
 # ---------------------------------------------------------------------------
 # %%
-def stage_2_encounter_blocks():
-    """Stitch hospitalizations into encounter blocks; keep blocks with CRRT."""
-    raise NotImplementedError("Stage 2: not yet designed")
+def stage_2_encounter_blocks(hosp, adt, crrt):
+    """Stitch hospitalizations into encounter blocks; keep blocks with CRRT.
 
+    Takes the full hospitalization table (i.e. not Stage 1's output) and finds
+    partners for CRRT encounters across the whole table. Returns one row per
+    encounter block, plus the strobe additions.
+    """
+
+    strobe = []
+    # Creating DataFrames for a stitched hospitalization table, a stitched ADT table, and the mapping
+    _, _, mapping = stitch_encounters(hosp, adt, time_interval=STITCH_HOURS)
+    strobe.append(("hospitalizations before stitching", len(mapping)))
+    strobe.append(("encounter blocks after stitching", mapping["encounter_block"].nunique()))
+
+    # Attaching encounter block ID to hospitalization
+    hb = hosp.merge(mapping, on="hospitalization_id", how="left", validate="one_to_one")
+    assert hb["encounter_block"].notna().all(), "some hospitalizations assigned no block"
+
+    # Find blocks that contain CRRT episodes
+    crrt_ids = set(crrt["hospitalization_id"])
+    crrt_blocks = set(hb.loc[hb["hospitalization_id"].isin(crrt_ids), "encounter_block"])
+    hb = hb[hb["encounter_block"].isin(crrt_blocks)]
+    strobe.append(("blocks with any CRRT record", len(crrt_blocks)))
+
+    # Collapse from one row per hospitalization to one row per encounter block
+    n_in = len(hb)
+    hb = hb.sort_values(["encounter_block", "admission_dttm"])
+    blocks = hb.groupby("encounter_block").agg(
+        patient_id=("patient_id", "first"),
+        n_hospitalizations=("hospitalization_id", "size"),
+        block_admission_dttm=("admission_dttm", "min"),
+        block_discharge_dttm=("discharge_dttm", "max"),
+        age_at_admission=("age_at_admission", "first"),
+    ).reset_index()
+    assert len(blocks) == blocks["encounter_block"].nunique(), "duplicate blocks"
+    assert blocks["n_hospitalizations"].sum() == n_in, "rows lost or duplicated"
+
+    # Disposition comes from the LAST hospitalization in the block, since that is
+    # where the episode ended. Sorted by discharge_dttm, not admission_dttm.
+    last = (hb.sort_values(["encounter_block", "discharge_dttm"])
+            .groupby("encounter_block")
+            .last()[["discharge_category"]]
+            .reset_index()
+            )
+    blocks = blocks.merge(last, on="encounter_block", how="left", validate="one_to_one")
+
+    assert blocks["discharge_category"].notna().all(), "block lost its disposition"
+
+    # STROBE Criteria by Encounter Block
+    blocks = blocks[blocks["age_at_admission"] >= 18]
+    strobe.append(("adult blocks", len(blocks)))
+
+    y = blocks["block_admission_dttm"].dt.year
+    blocks = blocks[(y >= STUDY_YEAR_START) & (y <= STUDY_YEAR_END)]
+    strobe.append((f"admitted {STUDY_YEAR_START}-{STUDY_YEAR_END}", len(blocks)))
+
+    print("\nSTROBE, stage 2")
+    for label, n in strobe:
+        print(f"  {label:<36} {n:>9,}")
+    multi = (blocks["n_hospitalizations"] > 1).sum()
+    print(f"\n  blocks built from >1 hospitalization: {multi:,}")
+
+    return blocks, strobe
+
+# %%
+blocks, strobe_2 = stage_2_encounter_blocks(hosp, adt, crrt)
 
 # ---------------------------------------------------------------------------
 # Stage 3: The ESRD exclusion
 # ---------------------------------------------------------------------------
 
+# %%
 def stage_3_exclude_esrd():
     """Drop encounter blocks with pre-existing end-stage renal disease."""
     raise NotImplementedError("Stage 3: not yet designed")
@@ -223,3 +286,5 @@ def stage_8_write():
     """Write patient-level artifacts and the shareable STROBE count table."""
     raise NotImplementedError("Stage 8: not yet designed")
 
+
+# %%

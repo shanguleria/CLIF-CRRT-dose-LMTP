@@ -100,8 +100,12 @@ stage_0_inspect(crrt)
 # ---------------------------------------------------------------------------
 # %%
 def stage_1_base_population(hosp, crrt):
-    """Restrict to adults (age >= 18) admitted within the study years who received CRRT.
-    Returns the filtered hospitalization table and the STROBE count ladder
+    """Count how many hospitalizations are eligible: adults, in the study years,
+    with a CRRT record.
+
+    A reporting step, not a data-producing one. Returns the STROBE count ladder
+    as a list of (label, count) pairs; Stage 2 builds the actual cohort from the
+    full tables, because stitching must see the whole population.
     """
     # Facts about the INPUTS, captured before any filter reassigns hosp.
     site_years = hosp["admission_dttm"].dt.year
@@ -137,9 +141,13 @@ def stage_1_base_population(hosp, crrt):
     for label, n in strobe:
         print(f"  {label:<34} {n:>9,}")
 
-    return hosp, strobe
+    # Only the ladder. This is a reporting step: its deliverable is the
+    # hospitalization-level rows of the STROBE diagram, not a table. Stage 2
+    # works from the full hosp/crrt tables so that stitching can see a CRRT
+    # encounter's partners.
+    return strobe
 
-hosp_study, strobe = stage_1_base_population(hosp, crrt)
+strobe_1 = stage_1_base_population(hosp, crrt)
 
 # ---------------------------------------------------------------------------
 # Stage 2: CRRT encounters and the encounter block

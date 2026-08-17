@@ -26,7 +26,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
-from clifpy import CrrtTherapy, Hospitalization
+from clifpy import Adt, CrrtTherapy, Hospitalization, stitch_encounters
 
 try:
     REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -45,6 +45,8 @@ STUDY_YEAR_START = design["cohort"]["study_year_start"]
 STUDY_YEAR_END = design["cohort"]["study_year_end"]
 print(f"study window: {STUDY_YEAR_START}-{STUDY_YEAR_END}")
 
+STITCH_HOURS = design["cohort"]["stitch_time_interval_hours"]
+
 _kw = dict(
     data_directory=config["data_directory"],
     filetype=config["filetype"],
@@ -54,7 +56,9 @@ _kw = dict(
 
 crrt = CrrtTherapy.from_file(**_kw).df
 hosp = Hospitalization.from_file(**_kw).df
+adt = Adt.from_file(**_kw).df
 print(f"crrt: {len(crrt):,} rows   hosp: {len(hosp):,} rows")
+print(f"adt: {len(adt):,} rows")
 
 # ---------------------------------------------------------------------------
 # Stage 0: What do we actually have?

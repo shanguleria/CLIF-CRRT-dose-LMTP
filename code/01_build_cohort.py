@@ -18,35 +18,52 @@ never rows. Outputs split into output/intermediate_phi/ (patient-level, stays at
 the site) and output/final_no_phi/ (aggregate, shareable).
 """
 # %%
+# ---------------------------------------------------------------------------
+# IMPORT BLOCK
+# ---------------------------------------------------------------------------
 from __future__ import annotations
 import json
 from pathlib import Path
 
 import pandas as pd
-from clifpy import CrrtTherapy
+from clifpy import CrrtTherapy, Hospitalization
+
+try:
+    REPO_ROOT = Path(__file__).resolve().parent.parent
+except NameError:               # no __file__ in an interactive session
+    REPO_ROOT = Path.cwd()
+
+# %%
+# ---------------------------------------------------------------------------
+# CONFIG BLOCK
+# ---------------------------------------------------------------------------
+
+config = json.loads((REPO_ROOT / "config" / "config.json").read_text())
+design = json.loads((REPO_ROOT / "config" / "lmtp_design.json").read_text())
+
+STUDY_YEAR_START = design["cohort"]["study_year_start"]
+STUDY_YEAR_END = design["cohort"]["study_year_end"]
+print(f"study window: {STUDY_YEAR_START}-{STUDY_YEAR_END}")
+
+_kw = dict(
+    data_directory=config["data_directory"],
+    filetype=config["filetype"],
+    timezone=config["timezone"],
+    output_directory=str(REPO_ROOT / "output"),
+)
+
+crrt = CrrtTherapy.from_file(**_kw).df
+hosp = Hospitalization.from_file(**_kw).df
+print(f"crrt: {len(crrt):,} rows   hosp: {len(hosp):,} rows")
 
 # ---------------------------------------------------------------------------
 # Stage 0: What do we actually have?
 # ---------------------------------------------------------------------------
 
-def stage_0_inspect():
+def stage_0_inspect(df):
     """Report the shape, modality mix, and completeness of clif_crrt_therapy.
     Prints aggregates only; nothing here may show patient-level rows.
     """
-    repo_root = Path(__file__).resolve().parent.parent
-    config = json.loads((repo_root / 
-                         "config" / 
-                         "config.json").read_text())
-    print(config)
-
-    crrt = CrrtTherapy.from_file(
-        data_directory=config["data_directory"],
-        filetype=config["filetype"],
-        timezone=config["timezone"],
-        output_directory=str(repo_root / "output"),
-    )
-    df = crrt.df
-
     # Exploring rows, hospitalizations, date ranges, time zone, modalities
     print(f"rows: {len(df):,}")
     print(f"distinct hospitalizations: {df['hospitalization_id'].nunique():,}")
@@ -76,7 +93,7 @@ def stage_0_inspect():
     print("Note that DFR will be missing for convective-only modalities \n"
     "and fluid replacement will be missing from diffusive-only modalities")
 
-stage_0_inspect()
+stage_0_inspect(crrt)
 
 # ---------------------------------------------------------------------------
 # Stage 1: Adults and study years

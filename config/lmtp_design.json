@@ -99,6 +99,34 @@
     "stitch_time_interval_hours": 6,
     "_stitch_why": "Hospitalizations for the same patient separated by less than this gap are treated as one encounter block, the unit of analysis. 6 hours is clifpy's default and the sibling CJASN analysis uses it. PROTOCOL, not site config: two sites stitching at different intervals would be counting different things, and the ED-to-inpatient transfer pattern this exists to absorb is common everywhere.",
 
+    "esrd_exclusion": {
+      "_why": "Pre-existing end-stage renal disease is excluded because the study is about CRRT for ACUTE kidney injury. A dialysis-dependent patient's CRRT is not treating AKI, and dose has a different meaning for them. PROTOCOL: the code list defines who is in the study, so it cannot vary by site.",
+      "_grain": "Applied at ENCOUNTER BLOCK grain. If any hospitalization in a stitched block carries an ESRD code, the whole block is excluded; otherwise the partner hospitalization leaks back into the non-ESRD denominator. Pre-existing ESRD is a PATIENT fact, not a hospitalization fact.",
+      "_known_divergence_from_sibling": "This yields 906 excluded / 2,246 remaining at the coordinating site, against the sibling pipeline's 905 / 2,247. Verified 2026-08-17: the difference is the single multi-hospitalization block, where the NON-CRRT partner carries the ESRD code. The sibling's comment states the intent we implement ('if ANY hospitalization in a stitched block has an ESRD code, the whole block is excluded'), but its diagnosis frame was narrowed to cohort hospitalizations before the ESRD lookup, so the partner's codes were never visible. We match their intent, not their output. Downstream reconciliation targets shift by 1 accordingly.",
+      "_code_normalization": "Match on diagnosis_code lowercased with dots removed, so 'N18.6' and 'n186' both hit.",
+      "_poa_rule": "Require present-on-admission, since the exclusion is for PRE-EXISTING disease. But if poa_present carries no positive values at all (some ETLs leave it unpopulated, e.g. the MIMIC conversion sets it to 0 on every row), the POA condition would silently exclude NOBODY and the cohort would just come out larger. In that case fall back to matching on code alone and say so loudly.",
+      "codes": [
+        {"code": "z992",  "system": "ICD10", "label": "Dependence on renal dialysis"},
+        {"code": "i120",  "system": "ICD10", "label": "Hypertensive CKD with stage 5 CKD or ESRD"},
+        {"code": "n186",  "system": "ICD10", "label": "End stage renal disease"},
+        {"code": "i132",  "system": "ICD10", "label": "Hypertensive heart and CKD with heart failure and stage 5 CKD/ESRD"},
+        {"code": "i1311", "system": "ICD10", "label": "Hypertensive heart and CKD without heart failure, stage 5 CKD/ESRD"},
+        {"code": "z4931", "system": "ICD10", "label": "Encounter for adequacy testing for hemodialysis"},
+        {"code": "z4901", "system": "ICD10", "label": "Encounter for fitting/adjustment of extracorporeal dialysis catheter"},
+        {"code": "5856",  "system": "ICD9",  "label": "End stage renal disease"},
+        {"code": "40391", "system": "ICD9",  "label": "Hypertensive CKD, unspecified, with CKD stage V or ESRD"},
+        {"code": "40311", "system": "ICD9",  "label": "Hypertensive CKD, benign, with CKD stage V or ESRD"},
+        {"code": "v4511", "system": "ICD9",  "label": "Renal dialysis status"}
+      ],
+      "_removed_2026_07_31": [
+        "Four codes were removed from this list for over-excluding non-ESRD patients. Do not reinstate them without revisiting that decision.",
+        "i272   I27.2   'Other secondary pulmonary hypertension'. Not an ESRD code, and common in critically ill patients (left heart disease, chronic lung disease, PE). Risked dropping genuine AKI-CRRT patients.",
+        "z9115  Z91.15  'Noncompliance with renal dialysis'. A care-adherence code, not a dialysis-dependence code.",
+        "z91158 Z91.158 Probably not a valid ICD-10-CM code at all.",
+        "v4512  V45.12  ICD-9 analogue of Z91.15, removed with it so the ICD-9 and ICD-10 arms encode the same concepts."
+      ]
+    },
+
     "exclude_short_crrt": false,
     "_exclude_short_crrt_why": "Dropped. It only ever existed because a point-treatment design needs 24h of therapy to define the exposure. LMTP handles early death structurally, so the exclusion is no longer motivated and would now induce selection."
   },

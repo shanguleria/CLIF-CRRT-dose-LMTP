@@ -96,6 +96,9 @@
       "per-site coverage alongside the per-site estimate."
     ],
 
+    "stitch_time_interval_hours": 6,
+    "_stitch_why": "Hospitalizations for the same patient separated by less than this gap are treated as one encounter block, the unit of analysis. 6 hours is clifpy's default and the sibling CJASN analysis uses it. PROTOCOL, not site config: two sites stitching at different intervals would be counting different things, and the ED-to-inpatient transfer pattern this exists to absorb is common everywhere.",
+
     "exclude_short_crrt": false,
     "_exclude_short_crrt_why": "Dropped. It only ever existed because a point-treatment design needs 24h of therapy to define the exposure. LMTP handles early death structurally, so the exclusion is no longer motivated and would now induce selection."
   },

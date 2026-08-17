@@ -103,7 +103,10 @@ def stage_1_base_population(hosp, crrt):
     """Restrict to adults (age >= 18) admitted within the study years who received CRRT.
     Returns the filtered hospitalization table and the STROBE count ladder
     """
-    print(f"starting with {len(hosp):,} hospitalizations")
+    # Facts about the INPUTS, captured before any filter reassigns hosp.
+    site_years = hosp["admission_dttm"].dt.year
+    site_first, site_last = site_years.min(), site_years.max()
+    all_hosp_ids = set(hosp["hospitalization_id"])
 
     strobe = []
     strobe.append(("all hospitalizations", len(hosp))) # Start with all hospitalizations
@@ -111,17 +114,24 @@ def stage_1_base_population(hosp, crrt):
     hosp = hosp[hosp["age_at_admission"] >= 18]
     strobe.append(("adults (age >= 18)", len(hosp))) # Filter for only adults over 18yo
 
-    year = hosp["admission_dttm]"].dt.year
+    year = hosp["admission_dttm"].dt.year
     hosp = hosp[(year >= STUDY_YEAR_START) & (year <= STUDY_YEAR_END)]
     strobe.append((f"admitted {STUDY_YEAR_START}-{STUDY_YEAR_END}", len(hosp))) # Filter for study years
 
-    crrt_ids = crrt["hospitalization_id"].unique()
-    hosp = hosp[hosp["hospitalization)id"].isin(crrt_ids)]
+    crrt_ids = set(crrt["hospitalization_id"])
+    hosp = hosp[hosp["hospitalization_id"].isin(crrt_ids)]
     strobe.append(("received CRRT", len(hosp))) # Filter for only those hospitalizations with a CRRT record
 
-    years = hosp["admission_dttm"].dt.year
-    print(f"\nsite data covers {years.min()}-{years.max()} "
+    # Referential integrity: CRRT records whose hospitalization does not exist.
+    # The .isin above drops these silently, so count them deliberately.
+    orphans = crrt_ids - all_hosp_ids
+
+    # Print the STROBE ladder
+    print(f"\nsite data covers {site_first}-{site_last} "
           f"(protocol window {STUDY_YEAR_START}-{STUDY_YEAR_END})")
+    if orphans:
+        print(f"WARNING: {len(orphans)} CRRT hospitalization_id(s) have no row in "
+              f"clif_hospitalization and are excluded")
 
     print("\nSTROBE ladder")
     for label, n in strobe:

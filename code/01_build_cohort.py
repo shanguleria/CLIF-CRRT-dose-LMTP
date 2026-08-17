@@ -17,7 +17,7 @@ DATA SAFETY: this script reads protected patient data. Print aggregates only,
 never rows. Outputs split into output/intermediate_phi/ (patient-level, stays at
 the site) and output/final_no_phi/ (aggregate, shareable).
 """
-
+# %%
 from __future__ import annotations
 import json
 from pathlib import Path
@@ -31,13 +31,6 @@ from clifpy import CrrtTherapy
 
 def stage_0_inspect():
     """Report the shape, modality mix, and completeness of clif_crrt_therapy.
-
-    Run before any cohort logic, because site-specific charting reality decides
-    which branches the later stages actually need. At the coordinating site this
-    established that the data is CVVHD-only, that both replacement-fluid columns
-    are entirely null, and that dialysate flow carries physiologically
-    impossible outliers. See docs/clif_cohort_tutorial.md, Stage 0.
-
     Prints aggregates only; nothing here may show patient-level rows.
     """
     repo_root = Path(__file__).resolve().parent.parent
@@ -74,8 +67,7 @@ def stage_0_inspect():
         "ultrafiltration_out",
     ]
     # dropna=False so a null modality becomes a visible row rather than rows
-    # that silently vanish from the table. This site has none, but the script
-    # ships to ten of them.
+    # that silently vanish from the table.
     by_mode = (
         df.groupby("crrt_mode_category", dropna=False)[flow_cols]
         .apply(lambda g: g.isna().mean())
@@ -84,19 +76,27 @@ def stage_0_inspect():
     print("Note that DFR will be missing for convective-only modalities \n"
     "and fluid replacement will be missing from diffusive-only modalities")
 
+stage_0_inspect()
+
 # ---------------------------------------------------------------------------
 # Stage 1: Adults and study years
 # ---------------------------------------------------------------------------
-
+# %%
 def stage_1_base_population():
     """Restrict to adults (age >= 18) admitted within the study years."""
-    raise NotImplementedError("Stage 1: not yet designed")
 
+    strobe = []
+    strobe.append(("all hospitalizations", len(hosp)))
+
+    hosp = hosp[hosp["age at admission"] >= 18]
+    strobe.append(("adults (age >= 18)", len(hosp)))
+
+stage_1_base_population()
 
 # ---------------------------------------------------------------------------
 # Stage 2: CRRT encounters and the encounter block
 # ---------------------------------------------------------------------------
-
+# %%
 def stage_2_encounter_blocks():
     """Stitch hospitalizations into encounter blocks; keep blocks with CRRT."""
     raise NotImplementedError("Stage 2: not yet designed")
@@ -163,6 +163,3 @@ def stage_8_write():
     """Write patient-level artifacts and the shareable STROBE count table."""
     raise NotImplementedError("Stage 8: not yet designed")
 
-
-if __name__ == "__main__":
-    stage_0_inspect()

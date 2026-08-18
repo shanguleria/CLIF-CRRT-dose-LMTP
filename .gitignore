@@ -17,8 +17,8 @@
 #              It is useful to anyone working on this code, so it ships.
 #   docs/      IGNORED, and a symlink to ../crrt-manuscript-tools/lmtp-docs.
 #              The cohort tutorial is built around worked numbers from the
-#              coordinating site: its cohort counts, its 67.7% in-hospital
-#              mortality, and a detailed account of its EHR charting defects.
+#              coordinating site: its cohort counts, its mortality rate, and a
+#              detailed account of its EHR charting defects.
 #              Naming only UCMC was the wrong test; the content is the issue.
 #              A site-facing METHODS.md without site-specific numbers should
 #              replace it here.

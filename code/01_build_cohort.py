@@ -23,6 +23,8 @@ the site) and output/final_no_phi/ (aggregate, shareable).
 # ---------------------------------------------------------------------------
 from __future__ import annotations
 import json
+import subprocess
+from datetime import datetime, timezone as _tz
 from pathlib import Path
 
 import pandas as pd
@@ -653,9 +655,86 @@ cohort, strobe_7 = stage_7_outcomes(blocks_with_dose, pat)
 # Stage 8: Write output and STROBE counts
 # ---------------------------------------------------------------------------
 
-def stage_8_write():
-    """Write patient-level artifacts and the shareable STROBE count table."""
-    raise NotImplementedError("Stage 8: not yet designed")
+def _code_version(repo_root):
+    """git describe, or "unknown" where this is not a git checkout.
+
+    Sites may receive the code as a zip rather than a clone. "unknown" is a worse
+    answer than a SHA and a much better one than crashing at the final step of a
+    long run.
+    """
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo_root), "describe", "--always", "--dirty"],
+            capture_output=True, text=True, timeout=10, check=True,
+        ).stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def stage_8_write(cohort, dose_series, strobes, config, design, repo_root):
+    """Write patient-level artifacts and the shareable STROBE count table.
+
+    Computes nothing. The work is splitting outputs by whether they can leave the
+    site, and stamping the shareable one with enough provenance to trace it back to
+    the code and the estimand that produced it.
+    """
+    print(f"  stage 8 input: {len(cohort):,} blocks, {len(dose_series):,} dose records")
+
+    # Five fields, answering the questions someone pooling ten sites will ask.
+    # --dirty matters: it says the tree had uncommitted changes, so the SHA does
+    # not fully identify the code that ran.
+    prov = {
+        "site_id": config["site_name"],
+        "code_version": _code_version(repo_root),
+        "clif_version": config["clif_version"],
+        "definition_version": design["definition_version"],
+        "generated": datetime.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    for k, v in prov.items():
+        print(f"    {k:<20} {v}")
+
+    phi = repo_root / "output" / "intermediate_phi"
+    share = repo_root / "output" / "final_no_phi"
+    phi.mkdir(parents=True, exist_ok=True)
+    share.mkdir(parents=True, exist_ok=True)
+
+    # Sorted before writing so a re-run is byte-comparable. Row order out of a
+    # groupby is not guaranteed stable across pandas versions, and an artifact
+    # whose bytes change without its contents changing cannot be hash-checked.
+    cohort_out = cohort.sort_values("encounter_block").reset_index(drop=True)
+    dose_out = (dose_series.sort_values(["encounter_block", "recorded_dttm"])
+                           .reset_index(drop=True))
+    cohort_out.to_parquet(phi / "cohort.parquet", index=False)
+    dose_out.to_parquet(phi / "dose_series.parquet", index=False)
+    print(f"    wrote intermediate_phi/cohort.parquet      {len(cohort_out):,} rows")
+    print(f"    wrote intermediate_phi/dose_series.parquet {len(dose_out):,} rows")
+
+    # Long format, provenance repeated on every row: pooled files get concatenated
+    # and filtered, and a header-only provenance block is lost the moment they are.
+    rows = [{"stage": s, "step": i, "label": lab, "n": int(n)}
+            for s, entries in strobes for i, (lab, n) in enumerate(entries, 1)]
+    strobe_df = pd.DataFrame(rows)
+    for k, v in prov.items():
+        strobe_df[k] = v
+
+    # Stage 8 is where an accident would leave the site. This cannot fire today;
+    # it exists so a future edit adding a helpful "example encounter_block" column
+    # stops the run rather than shipping silently. A timestamp would be equally
+    # disqualifying: an admission time plus a site is re-identifying, a count is not.
+    ID_LIKE = ("encounter_block", "hospitalization_id", "patient_id", "_dttm")
+    leaked = [c for c in strobe_df.columns if any(s in c for s in ID_LIKE)]
+    assert not leaked, f"identifier-like columns in a shareable file: {leaked}"
+    assert strobe_df["n"].notna().all(), "a strobe row lost its count"
+
+    path = share / f"{config['site_name']}_strobe_counts.csv"
+    strobe_df.to_csv(path, index=False)
+    print(f"    wrote final_no_phi/{path.name}  {len(strobe_df)} rows, PHI-checked")
+    return prov
+
+
+strobes = [(1, strobe_1), (2, strobe_2), (3, strobe_3), (4, strobe_4),
+           (5, strobe_5), (6, strobe_6), (7, strobe_7)]
+cohort_prov = stage_8_write(cohort, dose_series, strobes, config, design, REPO_ROOT)
 
 
 # %%

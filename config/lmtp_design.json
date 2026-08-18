@@ -12,7 +12,6 @@
     "is being estimated. It is not the place to make a failing run pass. Every edit",
     "should be a deliberate, reviewed commit that also bumps definition_version."
   ],
-
   "exposure": {
     "quantity": "delivered CRRT effluent dose",
     "units": "mL/kg/hr",
@@ -22,45 +21,56 @@
     "_denominator_caveat": "A fixed delta is a different absolute effluent change in every patient, against a fluid-overloaded actual weight. Known to matter: actual-vs-IBW moves the >=30 share from 46% to 76%. Open question 4 in the findings.",
     "_prescribed_vs_delivered": "This is DELIVERED dose. RENAL and ATN randomised PRESCRIPTION. A policy defined on delivered dose is not directly implementable; this is a stated limitation, and it is sharper for an intervention estimand than for an association."
   },
-
   "policy": {
     "shift_form": "self_limiting_never_clamped",
     "_formula": "d(a) = a - delta   if a - delta >= floor;   a   otherwise",
     "_critical": "NEVER clamp to the floor. The lmtp package supplies no guard for this and will not warn. Clamping breaks the Assumption 5 invertibility condition. See fluid_ARDS/plans/lmtp_discussion.md S4.4 and S4.7.",
     "delta_primary": 5,
-    "delta_ladder": [2.5, 5, 10],
+    "delta_ladder": [
+      2.5,
+      5,
+      10
+    ],
     "_delta_ladder_why": "The ladder IS the dose-response result; report all three rungs, not just the primary. delta=2.5 is universally clean (max binned density ratio 2.6-6.0, zero mass above ratio 10 at any site). delta=10 is the clinically vivid rung but is diluted at two low-dose sites (moves only 23% and 27% of patients) and unstable at the two tight-dosing sites (density ratios to 31.0, 17-70% of cohort above ratio 10). Keep it, with the honest caveat.",
     "floor": 15,
     "floor_sensitivity": 20,
     "_floor_why": "floor=20 collapses policy coverage to 4% and 11% at the two lowest-dose sites at delta=10, and to 33%/23% even at delta=2.5/5 at one of them. Sensitivity rung only, never primary."
   },
-
   "time": {
     "tau": 3,
-    "exposure_node_hours": [0, 24, 48],
+    "exposure_node_hours": [
+      0,
+      24,
+      48
+    ],
     "_tau_why": "Retention at 48h is >=38% at every one of the ten sites. A fourth node at 72h is viable at most sites but thin at one (27%). Do not go past tau=4.",
     "outcome_horizon_days": 30,
     "outcome_anchor": "CRRT initiation",
-    "outcome_grid_days": [3, 7, 14, 30],
+    "outcome_grid_days": [
+      3,
+      7,
+      14,
+      30
+    ],
     "_outcome_grid_why": "Exposure runs to day 3 but follow-up runs to day 30. The outcome nodes must be coarsened or the T x T influence-function covariance becomes ill-conditioned at small sites. Verify lmtp v1.5.4 mechanics for tau_trt < tau_outcome before relying on this."
   },
-
   "outcome": {
     "primary": "30-day in-hospital mortality",
     "_definition": "In-hospital by construction: death is taken from discharge disposition (expired OR hospice), so post-discharge deaths are unobservable. Hospice counts as a death (2.7% at the coordinating site). death_dttm is missing for 37% of counted deaths and the last vital sign is the fallback timestamp, which can flip a patient across the 30-day boundary. ALL OF THIS MUST BE STATED EXPLICITLY IN ANY METHODS SECTION.",
     "competing_event": "discharge_alive",
     "_competing_event_how": "Via the lmtp `compete` argument. Matches the existing Fine-Gray CIFs in the sibling pipeline's script 05."
   },
-
   "estimation": {
     "primary": "lmtp_sdr",
     "secondary": "lmtp_tmle",
-    "diagnostics": ["lmtp_gcomp", "lmtp_ipw"],
+    "diagnostics": [
+      "lmtp_gcomp",
+      "lmtp_ipw"
+    ],
     "_why_sdr": "Diaz's own applied choice. See fluid_ARDS/plans/lmtp_discussion.md S6.3 for the real tradeoff against TMLE.",
     "package": "lmtp",
     "package_version_target": "1.5.4"
   },
-
   "site_admission": {
     "rule": "band_occupancy_under_the_shift",
     "_replaces": "The `high-dose arm < 100 patients` convention used by the point-treatment analysis, which excluded two sites.",
@@ -68,12 +78,10 @@
     "threshold": null,
     "_threshold_todo": "Not yet specified. Must be fixed and committed BEFORE any pooled effect is estimated under it."
   },
-
   "cohort": {
     "definition_source": "code/01_build_cohort.py in this repo",
     "_definition_source_history": "Originally planned as a verbatim vendoring of 00_cohort.py from CLIF-epidemiology-of-CRRT @ ee4774b. Changed 2026-08-16: that file is a converted Jupyter notebook (55 cells, ~900 lines of diagnostics, no callable API), and clifpy 0.4.9 already provides stitch_encounters, compute_sofa_polars, create_wide_dataset and apply_outlier_handling. Reimplemented lean on clifpy primitives instead.",
     "_must_reconcile": "The cohort is intended to match the sibling CJASN analysis. Two papers from the same consortium must not report two different Ns without a stated reason. Because the logic is reimplemented rather than copied, equality is a CLAIM TO BE TESTED, not a fact: validate the encounter-block count and set against the sibling pipeline's output before reporting anything. Expected at the coordinating site: 2,136 encounter blocks.",
-
     "study_year_start": 2018,
     "study_year_end": 2024,
     "_study_window_why": [
@@ -95,10 +103,8 @@
       "available range so partial coverage is visible rather than silent. Report",
       "per-site coverage alongside the per-site estimate."
     ],
-
     "stitch_time_interval_hours": 6,
     "_stitch_why": "Hospitalizations for the same patient separated by less than this gap are treated as one encounter block, the unit of analysis. 6 hours is clifpy's default and the sibling CJASN analysis uses it. PROTOCOL, not site config: two sites stitching at different intervals would be counting different things, and the ED-to-inpatient transfer pattern this exists to absorb is common everywhere.",
-
     "esrd_exclusion": {
       "_why": "Pre-existing end-stage renal disease is excluded because the study is about CRRT for ACUTE kidney injury. A dialysis-dependent patient's CRRT is not treating AKI, and dose has a different meaning for them. PROTOCOL: the code list defines who is in the study, so it cannot vary by site.",
       "_grain": "Applied at ENCOUNTER BLOCK grain. If any hospitalization in a stitched block carries an ESRD code, the whole block is excluded; otherwise the partner hospitalization leaks back into the non-ESRD denominator. Pre-existing ESRD is a PATIENT fact, not a hospitalization fact.",
@@ -106,17 +112,61 @@
       "_code_normalization": "Match on diagnosis_code lowercased with dots removed, so 'N18.6' and 'n186' both hit.",
       "_poa_rule": "Require present-on-admission, since the exclusion is for PRE-EXISTING disease. But if poa_present carries no positive values at all (some ETLs leave it unpopulated, e.g. the MIMIC conversion sets it to 0 on every row), the POA condition would silently exclude NOBODY and the cohort would just come out larger. In that case fall back to matching on code alone and say so loudly.",
       "codes": [
-        {"code": "z992",  "system": "ICD10", "label": "Dependence on renal dialysis"},
-        {"code": "i120",  "system": "ICD10", "label": "Hypertensive CKD with stage 5 CKD or ESRD"},
-        {"code": "n186",  "system": "ICD10", "label": "End stage renal disease"},
-        {"code": "i132",  "system": "ICD10", "label": "Hypertensive heart and CKD with heart failure and stage 5 CKD/ESRD"},
-        {"code": "i1311", "system": "ICD10", "label": "Hypertensive heart and CKD without heart failure, stage 5 CKD/ESRD"},
-        {"code": "z4931", "system": "ICD10", "label": "Encounter for adequacy testing for hemodialysis"},
-        {"code": "z4901", "system": "ICD10", "label": "Encounter for fitting/adjustment of extracorporeal dialysis catheter"},
-        {"code": "5856",  "system": "ICD9",  "label": "End stage renal disease"},
-        {"code": "40391", "system": "ICD9",  "label": "Hypertensive CKD, unspecified, with CKD stage V or ESRD"},
-        {"code": "40311", "system": "ICD9",  "label": "Hypertensive CKD, benign, with CKD stage V or ESRD"},
-        {"code": "v4511", "system": "ICD9",  "label": "Renal dialysis status"}
+        {
+          "code": "z992",
+          "system": "ICD10",
+          "label": "Dependence on renal dialysis"
+        },
+        {
+          "code": "i120",
+          "system": "ICD10",
+          "label": "Hypertensive CKD with stage 5 CKD or ESRD"
+        },
+        {
+          "code": "n186",
+          "system": "ICD10",
+          "label": "End stage renal disease"
+        },
+        {
+          "code": "i132",
+          "system": "ICD10",
+          "label": "Hypertensive heart and CKD with heart failure and stage 5 CKD/ESRD"
+        },
+        {
+          "code": "i1311",
+          "system": "ICD10",
+          "label": "Hypertensive heart and CKD without heart failure, stage 5 CKD/ESRD"
+        },
+        {
+          "code": "z4931",
+          "system": "ICD10",
+          "label": "Encounter for adequacy testing for hemodialysis"
+        },
+        {
+          "code": "z4901",
+          "system": "ICD10",
+          "label": "Encounter for fitting/adjustment of extracorporeal dialysis catheter"
+        },
+        {
+          "code": "5856",
+          "system": "ICD9",
+          "label": "End stage renal disease"
+        },
+        {
+          "code": "40391",
+          "system": "ICD9",
+          "label": "Hypertensive CKD, unspecified, with CKD stage V or ESRD"
+        },
+        {
+          "code": "40311",
+          "system": "ICD9",
+          "label": "Hypertensive CKD, benign, with CKD stage V or ESRD"
+        },
+        {
+          "code": "v4511",
+          "system": "ICD9",
+          "label": "Renal dialysis status"
+        }
       ],
       "_removed_2026_07_31": [
         "Four codes were removed from this list for over-excluding non-ESRD patients. Do not reinstate them without revisiting that decision.",
@@ -126,11 +176,9 @@
         "v4512  V45.12  ICD-9 analogue of Z91.15, removed with it so the ICD-9 and ICD-10 arms encode the same concepts."
       ]
     },
-
     "exclude_short_crrt": false,
     "_exclude_short_crrt_why": "Dropped. It only ever existed because a point-treatment design needs 24h of therapy to define the exposure. LMTP handles early death structurally, so the exclusion is no longer motivated and would now induce selection."
   },
-
   "discontinuation_handling": null,
   "_discontinuation_handling_BLOCKING": {
     "status": "UNRESOLVED. This blocks the node schema, and therefore blocks 02_build_lmtp_df.py.",
@@ -140,6 +188,8 @@
       "carry_forward_zero": "Carry dose forward as 0. NOTE this silently changes the estimand to 'dose or no dose', which is a different scientific question.",
       "while_on_therapy": "Define the policy only while the patient is on therapy."
     },
-    "note": "These are three different estimands, not three implementations of one. Decide before building the dataset."
+    "note": "These are three different estimands, not three implementations of one. Decide before building the dataset.",
+    "scuf_within_the_window": "SCUF is dose-ineligible, so a SCUF interval inside the exposure window is a patient who is ON CRRT, being charted, and producing NO DOSE at that node. Measured at the coordinating site 2026-08-17: 128 of 2,246 blocks (5.7%) have SCUF records inside their own 0-72h window, median 2 rows, max 66. This is structurally the same question as liberation and MUST be decided with it, not separately: is such a node dose=0, undefined, or off-therapy? The point-treatment design never met this because it looked once at t=0.",
+    "scuf_before_t0": "Related but separate. 342 blocks have SCUF plus another mode and are retained; only 3 blocks that are SCUF for their entire record are dropped. For those 342 the index event is the first DOSE-ELIGIBLE record, so t=0 sits later than the first CRRT record by a median of 0.6h, but by more than 24h for 18 blocks and by 61 days in one case. Defensible, since SCUF for volume overload and CVVHD for AKI clearance are different therapies for different indications, but it should be a stated choice rather than a side effect of filter placement."
   }
 }

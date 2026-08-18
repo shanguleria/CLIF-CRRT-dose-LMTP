@@ -58,7 +58,16 @@
     "primary": "30-day in-hospital mortality",
     "_definition": "In-hospital by construction: death is taken from discharge disposition (expired OR hospice), so post-discharge deaths are unobservable. Hospice counts as a death (2.7% at the coordinating site). death_dttm is missing for 37% of counted deaths and the last vital sign is the fallback timestamp, which can flip a patient across the 30-day boundary. ALL OF THIS MUST BE STATED EXPLICITLY IN ANY METHODS SECTION.",
     "competing_event": "discharge_alive",
-    "_competing_event_how": "Via the lmtp `compete` argument. Matches the existing Fine-Gray CIFs in the sibling pipeline's script 05."
+    "_competing_event_how": "Via the lmtp `compete` argument. Matches the existing Fine-Gray CIFs in the sibling pipeline's script 05.",
+    "death_ascertainment": "discharge_disposition",
+    "death_dispositions": [
+      "expired",
+      "hospice"
+    ],
+    "event_time_source": "block_discharge_dttm",
+    "_event_time_why": "The event time is the discharge that ended the encounter block, NOT clif_patient.death_dttm. death_dttm is 37% missing at the coordinating site and unreliable at others, so using it requires a fallback, which mixes two timestamp sources with different error profiles under one column name. Measured 2026-08-18: death_dttm with a discharge fallback puts 48 deaths BEFORE CRRT initiation, against 10 using the discharge time alone, with identical 30-day mortality (1,392 / 64.9%). 39 of those 48 came from death_dttm itself. The disposition already establishes that the patient died, so taking the timing from the same source keeps flag and timing consistent. This also matches existing consortium practice for morgue and hospice discharges. death_dttm is retained as a DIAGNOSTIC column: where both exist they differ by a median of -2.5h, and by more than 24h in 15 blocks.",
+    "_hospice_counts_as_death": "39 blocks at the coordinating site, 2.7% of deaths. A hospice discharge is a transfer OUT of the hospital, not a death in it, so this is a definitional choice that MUST be stated explicitly.",
+    "_residual_impossibility": "10 blocks carry a death timed before their CRRT initiation. Same blocks as the Stage 4 late-initiation warning: the contradiction is between the CRRT timestamp and the discharge timestamp in the source, and no choice of event time fixes it. See todo 2e."
   },
   "estimation": {
     "primary": "lmtp_sdr",

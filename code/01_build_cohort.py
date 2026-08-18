@@ -18,7 +18,9 @@ never rows. Outputs split into output/intermediate_phi/ (patient-level, stays at
 the site) and output/final_no_phi/ (aggregate, shareable).
 """
 # %%
-# region IMPORT ====================================================================
+# ---------------------------------------------------------------------------
+# IMPORT BLOCK
+# ---------------------------------------------------------------------------
 from __future__ import annotations
 import json
 from pathlib import Path
@@ -32,9 +34,9 @@ except NameError:               # no __file__ in an interactive session
     REPO_ROOT = Path.cwd()
 
 # %%
-# endregion
-
-# region CONFIG ====================================================================
+# ---------------------------------------------------------------------------
+# CONFIG BLOCK
+# ---------------------------------------------------------------------------
 
 config = json.loads((REPO_ROOT / "config" / "config.json").read_text())
 design = json.loads((REPO_ROOT / "config" / "lmtp_design.json").read_text())
@@ -76,9 +78,9 @@ print(f"adt: {len(adt):,} rows")
 print(f"diag: {len(diag):,} rows   esrd codes: {len(ESRD_CODES)}")
 print(f"weight rows: {len(vit):,}")
 
-# endregion
-
-# region UTILITIES =================================================================
+# ---------------------------------------------------------------------------
+# Utility: view the whole ladder so far
+# ---------------------------------------------------------------------------
 # %%
 # Which stages chain from the one before, i.e. their first row should equal the
 # previous stage's last row. Stage 1 is a standalone report and Stage 2 restarts
@@ -131,9 +133,9 @@ def show_strobe():
     print("=" * (W + 22))
 
 
-# endregion
-
-# region Stage 0  What do we actually have? ========================================
+# ---------------------------------------------------------------------------
+# Stage 0: What do we actually have?
+# ---------------------------------------------------------------------------
 # %%
 def stage_0_inspect(df):
     """Report the shape, modality mix, and completeness of clif_crrt_therapy.
@@ -170,9 +172,9 @@ def stage_0_inspect(df):
 
 stage_0_inspect(crrt)
 
-# endregion
-
-# region Stage 1  Adults and study years ===========================================
+# ---------------------------------------------------------------------------
+# Stage 1: Adults and study years
+# ---------------------------------------------------------------------------
 # %%
 def stage_1_base_population(hosp, crrt):
     """Count how many hospitalizations are eligible: adults, in the study years,
@@ -228,9 +230,9 @@ def stage_1_base_population(hosp, crrt):
 
 strobe_1 = stage_1_base_population(hosp, crrt)
 
-# endregion
-
-# region Stage 2  CRRT encounters and the encounter block ==========================
+# ---------------------------------------------------------------------------
+# Stage 2: CRRT encounters and the encounter block
+# ---------------------------------------------------------------------------
 # %%
 def stage_2_encounter_blocks(hosp, adt, crrt):
     """Stitch hospitalizations into encounter blocks; keep blocks with CRRT.
@@ -298,9 +300,9 @@ def stage_2_encounter_blocks(hosp, adt, crrt):
 # %%
 blocks, strobe_2, mapping = stage_2_encounter_blocks(hosp, adt, crrt)
 
-# endregion
-
-# region Stage 3  The ESRD exclusion ===============================================
+# ---------------------------------------------------------------------------
+# Stage 3: The ESRD exclusion
+# ---------------------------------------------------------------------------
 
 # %%
 def stage_3_exclude_esrd(blocks, diag, mapping):
@@ -356,9 +358,9 @@ def stage_3_exclude_esrd(blocks, diag, mapping):
 # %%
 blocks_no_esrd, strobe_3 = stage_3_exclude_esrd(blocks, diag, mapping)
 
-# endregion
-
-# region Stage 4  CRRT initiation, the index event =================================
+# ---------------------------------------------------------------------------
+# Stage 4: CRRT initiation, the index event
+# ---------------------------------------------------------------------------
 # %%
 print(f"  stage 4 input: {len(blocks_no_esrd):,} blocks")
 def stage_4_crrt_initiation(blocks_no_esrd, crrt, mapping):
@@ -426,9 +428,9 @@ def stage_4_crrt_initiation(blocks_no_esrd, crrt, mapping):
 # %%
 blocks_with_init, strobe_4 = stage_4_crrt_initiation(blocks_no_esrd, crrt, mapping)
 
-# endregion
-
-# region Stage 5  Weight at initiation =============================================
+# ---------------------------------------------------------------------------
+# Stage 5: Weight at initiation
+# ---------------------------------------------------------------------------
 # %%
 def stage_5_weight(blocks_with_init, vit, mapping): 
     """Find the weight closest to initiation. This is the dose denominator."""
@@ -486,23 +488,22 @@ def stage_5_weight(blocks_with_init, vit, mapping):
 # %%
 blocks_with_weight, strobe_5 = stage_5_weight(blocks_with_init, vit, mapping)
 
-# endregion
-
-# region Stage 6  The effluent dose ================================================
+# ---------------------------------------------------------------------------
+# Stage 6: The effluent dose
+# ---------------------------------------------------------------------------
 
 def stage_6_dose():
     """Compute delivered effluent dose in mL/kg/hr, modality-agnostic.
 
     Sums dialysate + pre-filter + post-filter replacement for every dose-eligible
-    mode in a modality-agnostic fashion. 
+    mode, counting whichever are charted. SCUF excluded.
     """
+    raise NotImplementedError("Stage 6: not yet designed")
 
 
-
-
-# endregion
-
-# region Stage 7  Outcomes =========================================================
+# ---------------------------------------------------------------------------
+# Stage 7: Outcomes
+# ---------------------------------------------------------------------------
 
 def stage_7_outcomes():
     """Death, event datetime, and 30-day mortality anchored to CRRT initiation.
@@ -513,9 +514,9 @@ def stage_7_outcomes():
     raise NotImplementedError("Stage 7: not yet designed")
 
 
-# endregion
-
-# region Stage 8  Write output and STROBE counts ===================================
+# ---------------------------------------------------------------------------
+# Stage 8: Write output and STROBE counts
+# ---------------------------------------------------------------------------
 
 def stage_8_write():
     """Write patient-level artifacts and the shareable STROBE count table."""
@@ -526,4 +527,3 @@ def stage_8_write():
 
 # %%
 show_strobe()
-# endregion

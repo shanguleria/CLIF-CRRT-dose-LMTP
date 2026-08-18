@@ -354,23 +354,71 @@ blocks_no_esrd, strobe_3 = stage_3_exclude_esrd(blocks, diag, mapping)
 # Stage 4: CRRT initiation, the index event
 # ---------------------------------------------------------------------------
 # %%
-def stage_4_crrt_initiation(blocks, crrt, mapping):
+print(f"  stage 4 input: {len(blocks_no_esrd):,} blocks")
+def stage_4_crrt_initiation(blocks_no_esrd, crrt, mapping):
     """Define t = 0 as the first crrt_therapy record per encounter block in which 
     patient actually receives a nonzero CRRT dose."""
-print(f"  stage 4 input: {len(blocks):,} blocks")
+    strobe = []
 
-strobe = []
+    c_all = crrt.merge(mapping, on="hospitalization_id", how="left", validate="many_to_one")
+    c_all = c_all[c_all["encounter_block"].isin(set(blocks_no_esrd["encounter_block"]))]
 
-c = crrt.merge(mapping, on="hospitalization_id", how="left", validate="many_to_one")
-c = c[c["encounter_block"].isin(set(blocks_no_esrd["encounter_block"]))]
+    # Initiation of CRRT as the first record delivering a CRRT dose
+    delivering = False
+    for col in DOSE_FLOWS:
+        delivering = delivering | (c_all[col].notna() & (c_all[col] > 0))
 
-# Record modality mix and record encounters with SCUF for the whole record
-mode = c["crrt_mode_category"].str.lower()
-scuf_only = {b for b, m in c.groupby("encounter_block")["crrt_mode_category"]
-            if set(m.dropna().str.lower()) <= {"scuf"}}
+    init = (c_all[delivering].groupby("encounter_block")["recorded_dttm"].min()
+            .rename("crrt_initiation_dttm").reset_index())
 
 
+    n_before = len(blocks_no_esrd)
+    blocks_with_init = blocks_no_esrd.merge(init, on="encounter_block", how="inner",
+                                            validate="one_to_one")
+    strobe.append(("blocks entering stage 4", n_before))
+    strobe.append(("blocks with a CRRT initiation time", len(blocks_with_init)))
+    assert blocks_with_init["crrt_initiation_dttm"].notna().all(), "block without t=0"
 
+    # Determining the hours from admission to CRRT start
+    # Includes warnings for CRRT start times before admission or after discharge, which suggest ETL issues
+    late = blocks_with_init["crrt_initiation_dttm"] > blocks_with_init["block_discharge_dttm"]
+    early = blocks_with_init["crrt_initiation_dttm"] < blocks_with_init["block_admission_dttm"]
+    if late.any() or early.any():
+        over = ((blocks_with_init.loc[late, "crrt_initiation_dttm"]
+                    - blocks_with_init.loc[late, "block_discharge_dttm"]).dt.total_seconds()/3600)
+        print(f"  WARNING: {int(early.sum())} blocks start CRRT before admission, "
+                f"{int(late.sum())} after discharge "
+                f"(median {over.median():.1f}h past discharge)")
+
+    hrs = ((blocks_with_init["crrt_initiation_dttm"] - blocks_with_init["block_admission_dttm"])
+            .dt.total_seconds() / 3600)
+    print(f"  hours from admission to CRRT start: median {hrs.median():.1f}, "
+            f"p5 {hrs.quantile(.05):.1f}, p95 {hrs.quantile(.95):.1f}")
+
+    # What was actually charted for the blocks that got no t=0? 
+    # Grouped by the actual dose, not crrt_mode_category
+    no_init = set(blocks_no_esrd["encounter_block"]) - set(init["encounter_block"])
+    d = c_all[c_all["encounter_block"].isin(no_init)]
+    per_block = d.groupby("encounter_block").agg(
+        n_rows=("recorded_dttm", "size"),
+        any_uf=("ultrafiltration_out", lambda s: (s.notna() & (s > 0)).any()),
+        any_bf=("blood_flow_rate",     lambda s: (s.notna() & (s > 0)).any()),
+    )
+    ran = per_block["any_uf"] | per_block["any_bf"]
+    uf_only     = int((ran & (per_block["n_rows"] >= 6)).sum())
+    brief_trace = int((ran & (per_block["n_rows"] <  6)).sum())
+    no_evidence = int((~ran).sum())
+    print(f"  no t=0 for {len(no_init)} blocks: {uf_only} ultrafiltration-only courses, "
+            f"{brief_trace} brief traces (1-5 rows), {no_evidence} with no machine activity")
+
+    print("\nSTROBE, stage 4")
+    for label, n in strobe:
+        print(f"  {label:<38} {n:>9,}")
+
+    return blocks_with_init, strobe
+
+# %%
+blocks_with_init, strobe_4 = stage_4_crrt_initiation(blocks_no_esrd, crrt, mapping)
 
 # ---------------------------------------------------------------------------
 # Stage 5: Weight at initiation

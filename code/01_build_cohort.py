@@ -26,7 +26,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
-from clifpy import Adt, CrrtTherapy, Hospitalization, stitch_encounters
+from clifpy import Adt, CrrtTherapy, Hospitalization, HospitalDiagnosis, stitch_encounters
 
 try:
     REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -47,6 +47,8 @@ print(f"study window: {STUDY_YEAR_START}-{STUDY_YEAR_END}")
 
 STITCH_HOURS = design["cohort"]["stitch_time_interval_hours"]
 
+ESRD_CODES = {c["code"] for c in design["cohort"]["esrd_exclusion"]["codes"]}
+
 _kw = dict(
     data_directory=config["data_directory"],
     filetype=config["filetype"],
@@ -57,13 +59,16 @@ _kw = dict(
 crrt = CrrtTherapy.from_file(**_kw).df
 hosp = Hospitalization.from_file(**_kw).df
 adt = Adt.from_file(**_kw).df
+diag = HospitalDiagnosis.from_file(**_kw).df
+
 print(f"crrt: {len(crrt):,} rows   hosp: {len(hosp):,} rows")
 print(f"adt: {len(adt):,} rows")
+print(f"diag: {len(diag):,} rows   esrd codes: {len(ESRD_CODES)}")
 
 # ---------------------------------------------------------------------------
 # Stage 0: What do we actually have?
 # ---------------------------------------------------------------------------
-
+# %%
 def stage_0_inspect(df):
     """Report the shape, modality mix, and completeness of clif_crrt_therapy.
     Prints aggregates only; nothing here may show patient-level rows.
@@ -159,11 +164,9 @@ strobe_1 = stage_1_base_population(hosp, crrt)
 # %%
 def stage_2_encounter_blocks(hosp, adt, crrt):
     """Stitch hospitalizations into encounter blocks; keep blocks with CRRT.
-
-    Takes the full hospitalization table (i.e. not Stage 1's output) and finds
-    partners for CRRT encounters across the whole table. Returns one row per
-    encounter block, plus the strobe additions.
-    """
+    
+    Takes the full hospitalization table (i.e. not Stage 1's output) and finds partners\n
+    for CRRT encounters across the whole table. Returns one row per encounter block. """
 
     strobe = []
     # Creating DataFrames for a stitched hospitalization table, a stitched ADT table, and the mapping
@@ -194,8 +197,7 @@ def stage_2_encounter_blocks(hosp, adt, crrt):
     assert len(blocks) == blocks["encounter_block"].nunique(), "duplicate blocks"
     assert blocks["n_hospitalizations"].sum() == n_in, "rows lost or duplicated"
 
-    # Disposition comes from the LAST hospitalization in the block, since that is
-    # where the episode ended. Sorted by discharge_dttm, not admission_dttm.
+    # Discharge dttm to end encounter block based on last hospitalization in the block
     last = (hb.sort_values(["encounter_block", "discharge_dttm"])
             .groupby("encounter_block")
             .last()[["discharge_category"]]
@@ -230,14 +232,49 @@ blocks, strobe_2 = stage_2_encounter_blocks(hosp, adt, crrt)
 
 # %%
 def stage_3_exclude_esrd():
-    """Drop encounter blocks with pre-existing end-stage renal disease."""
-    raise NotImplementedError("Stage 3: not yet designed")
+    """Drop encounter blocks with pre-existing end-stage renal disease.
+    Applied at the encounter_block level as ESRD is patient-specific at that time scale."""
+# %%
+# Indent into the def function after testing
+    strobe = []
 
+    code = diag["diagnosis_code"].str.replace(".","",regex=False).str.lower()
+    is_esrd = code.isin(ESRD_CODES)
+    print(f"  diagnosis rows matching an ESRD code: {int(is_esrd.sum()):,}")
+    # Present on admission, if uninformative then favor dropping ESRD to be conservative
+    poa = diag["poa_present"]
+    poa_informative = bool((poa == 1).any())
+    if poa_informative:
+        is_esrd = is_esrd & (poa == 1)
+    else:
+        print("  NOTE: poa_present has no positive values. Treating it as "
+            "UNINFORMATIVE and matching on diagnosis code alone. With the POA "
+            "condition applied, ZERO blocks would be excluded.")
+    print(f"  after the POA rule:                   {int(is_esrd.sum()):,}")
+
+    # Exclude ESRD at the block grain
+    esrd_hosp_ids = set(diag.loc[is_esrd, "hospitalization_id"])
+    esrd_blocks = set(mapping.loc[
+        mapping["hospitalization_id"].isin(esrd_hosp_ids), "encounter_block"])
+
+    n_before = len(blocks)
+    blocks = blocks[~blocks["encounter_block"].isin(esrd_blocks)]
+    n_excluded = n_before - len(blocks)
+    assert n_excluded + len(blocks) == n_before, "blocks lost outside the filter"
+
+    strobe.append(("blocks with pre-existing ESRD", n_excluded))
+    strobe.append(("blocks without ESRD", len(blocks)))
+
+    print("\nSTROBE, stage 3")
+    for label, n in strobe:
+        print(f"  {label:<36} {n:>9,}")
+
+    return blocks, strobe
 
 # ---------------------------------------------------------------------------
 # Stage 4: CRRT initiation, the index event
 # ---------------------------------------------------------------------------
-
+# %%
 def stage_4_crrt_initiation():
     """Define t = 0 as the first crrt_therapy record per encounter block."""
     raise NotImplementedError("Stage 4: not yet designed")

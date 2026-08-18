@@ -221,21 +221,23 @@ def stage_2_encounter_blocks(hosp, adt, crrt):
     multi = (blocks["n_hospitalizations"] > 1).sum()
     print(f"\n  blocks built from >1 hospitalization: {multi:,}")
 
-    return blocks, strobe
+    return blocks, strobe, mapping
 
 # %%
-blocks, strobe_2 = stage_2_encounter_blocks(hosp, adt, crrt)
+blocks, strobe_2, mapping = stage_2_encounter_blocks(hosp, adt, crrt)
 
 # ---------------------------------------------------------------------------
 # Stage 3: The ESRD exclusion
 # ---------------------------------------------------------------------------
 
 # %%
-def stage_3_exclude_esrd():
+def stage_3_exclude_esrd(blocks, diag, mapping):
     """Drop encounter blocks with pre-existing end-stage renal disease.
-    Applied at the encounter_block level as ESRD is patient-specific at that time scale."""
-# %%
-# Indent into the def function after testing
+
+    Applied at the encounter_block level, as ESRD is patient-specific at that
+    time scale: an ESRD code on ANY hospitalization in a block excludes the whole
+    block. Returns the surviving blocks and the strobe additions.
+    """
     strobe = []
 
     code = diag["diagnosis_code"].str.replace(".","",regex=False).str.lower()
@@ -270,6 +272,13 @@ def stage_3_exclude_esrd():
         print(f"  {label:<36} {n:>9,}")
 
     return blocks, strobe
+
+
+# %%
+# A NEW name, never a reassignment of `blocks`. Keeping the input intact makes
+# this cell safely re-runnable and leaves the pre-exclusion frame available, e.g.
+#   set(blocks["encounter_block"]) - set(blocks_no_esrd["encounter_block"])
+blocks_no_esrd, strobe_3 = stage_3_exclude_esrd(blocks, diag, mapping)
 
 # ---------------------------------------------------------------------------
 # Stage 4: CRRT initiation, the index event

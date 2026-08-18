@@ -70,6 +70,62 @@ print(f"adt: {len(adt):,} rows")
 print(f"diag: {len(diag):,} rows   esrd codes: {len(ESRD_CODES)}")
 
 # ---------------------------------------------------------------------------
+# Utility: view the whole ladder so far
+# ---------------------------------------------------------------------------
+# %%
+# Which stages chain from the one before, i.e. their first row should equal the
+# previous stage's last row. Stage 1 is a standalone report and Stage 2 restarts
+# from the full hospitalization table, so neither chains.
+STROBE_STAGES = [
+    (1, "Stage 1   hospitalizations", False),
+    (2, "Stage 2   encounter blocks", False),
+    (3, "Stage 3   ESRD exclusion",   True),
+    (4, "Stage 4   CRRT initiation",  True),
+    (5, "Stage 5   weight",           True),
+    (6, "Stage 6   dose",             True),
+    (7, "Stage 7   outcomes",         True),
+]
+
+
+def show_strobe():
+    """Print every stage's STROBE rows as one ladder. Takes no arguments.
+
+    Picks up whatever strobe_1 .. strobe_7 exist in the module namespace, so it
+    can be run at any point and simply reports later stages as not built yet.
+
+    Two things it checks, not just displays:
+      - the change column, which is a real exclusion count because every row is a
+        survivor count rather than a mixture of survivors and exclusions
+      - continuity, since a chaining stage's first row must equal the previous
+        stage's last row. A mismatch means a stage was handed the wrong frame
+    """
+    W, g = 44, globals()
+    print("\n" + "=" * (W + 22))
+    print("STROBE ladder, all stages")
+    print("=" * (W + 22))
+    last = None
+    for num, label, chains in STROBE_STAGES:
+        rows = g.get(f"strobe_{num}")
+        if not rows:
+            print(f"\n{label}   (not built yet)")
+            continue
+        print(f"\n{label}")
+        if chains and last is not None and rows[0][1] != last:
+            print(f"  !! expected to start at {last:,}, got {rows[0][1]:,}"
+                  f"  <- this stage was handed the wrong frame")
+        prev = None
+        for name, n in rows:
+            change = ""
+            if prev is not None:
+                d = n - prev
+                change = "         same" if d == 0 else f"{d:>+14,}"
+            print(f"  {name:<{W}} {n:>9,}{change}")
+            prev = n
+        last = rows[-1][1]
+    print("=" * (W + 22))
+
+
+# ---------------------------------------------------------------------------
 # Stage 0: What do we actually have?
 # ---------------------------------------------------------------------------
 # %%
@@ -278,7 +334,10 @@ def stage_3_exclude_esrd(blocks, diag, mapping):
     n_excluded = n_before - len(blocks_no_esrd)
     assert n_excluded + len(blocks_no_esrd) == n_before, "blocks lost outside the filter"
 
-    strobe.append(("blocks with pre-existing ESRD", n_excluded))
+    # Every strobe row is a count of what REMAINS; exclusions are the gaps
+    # between rows. That keeps the ladder readable top to bottom and makes each
+    # stage's first row the input check for the stage before it.
+    strobe.append(("blocks entering ESRD exclusion", n_before))
     strobe.append(("blocks without ESRD", len(blocks_no_esrd)))
 
     print("\nSTROBE, stage 3")
@@ -358,3 +417,6 @@ def stage_8_write():
 
 
 # %%
+
+# %%
+show_strobe()

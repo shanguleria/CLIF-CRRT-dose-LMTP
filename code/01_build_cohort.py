@@ -26,7 +26,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
-from clifpy import Adt, CrrtTherapy, Hospitalization, HospitalDiagnosis, stitch_encounters
+from clifpy import Adt, CrrtTherapy, Hospitalization, HospitalDiagnosis, Vitals, stitch_encounters
 
 try:
     REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -60,14 +60,23 @@ _kw = dict(
     output_directory=str(REPO_ROOT / "output"),
 )
 
+outliers = json.loads((REPO_ROOT / "config" / "outlier_config.json").read_text())
+WEIGHT_LO, WEIGHT_HI = outliers["weight_kg"]
+
 crrt = CrrtTherapy.from_file(**_kw).df
 hosp = Hospitalization.from_file(**_kw).df
 adt = Adt.from_file(**_kw).df
 diag = HospitalDiagnosis.from_file(**_kw).df
+vit = Vitals.from_file(
+    **_kw,
+    columns=["hospitalization_id", "recorded_dttm", "vital_category", "vital_value"],
+    filters={"vital_category": ["weight_kg"]},
+).df
 
 print(f"crrt: {len(crrt):,} rows   hosp: {len(hosp):,} rows")
 print(f"adt: {len(adt):,} rows")
 print(f"diag: {len(diag):,} rows   esrd codes: {len(ESRD_CODES)}")
+print(f"weight rows: {len(vit):,}")
 
 # ---------------------------------------------------------------------------
 # Utility: view the whole ladder so far
@@ -85,7 +94,6 @@ STROBE_STAGES = [
     (6, "Stage 6   dose",             True),
     (7, "Stage 7   outcomes",         True),
 ]
-
 
 def show_strobe():
     """Print every stage's STROBE rows as one ladder. Takes no arguments.
@@ -423,11 +431,62 @@ blocks_with_init, strobe_4 = stage_4_crrt_initiation(blocks_no_esrd, crrt, mappi
 # ---------------------------------------------------------------------------
 # Stage 5: Weight at initiation
 # ---------------------------------------------------------------------------
-
-def stage_5_weight():
+# %%
+def stage_5_weight(blocks_with_init, vit, mapping): 
     """Find the weight closest to initiation. This is the dose denominator."""
-    raise NotImplementedError("Stage 5: not yet designed")
+    print(f"  stage 5 input: {len(blocks_with_init):,} blocks")
+    strobe = []
 
+    w = vit.rename(columns={"vital_value": "weight_kg"})
+    n_raw = len(w)
+    w = w[w["weight_kg"].between(WEIGHT_LO, WEIGHT_HI)]
+    print(f"  weight rows: {n_raw:,} -> {len(w):,} inside [{WEIGHT_LO}, {WEIGHT_HI}] kg")
+
+    w = w.merge(mapping, on="hospitalization_id", how="inner", validate="many_to_one")
+    w = w[w["encounter_block"].isin(set(blocks_with_init["encounter_block"]))]
+
+    # Sort by dttm and align, then find the most recent weight recorded before CRRT initiation
+    left = (blocks_with_init[["encounter_block", "crrt_initiation_dttm"]]
+            .sort_values("crrt_initiation_dttm"))
+    right = w[["encounter_block", "recorded_dttm", "weight_kg"]].sort_values("recorded_dttm")
+
+    back = pd.merge_asof(left, right,
+                            left_on="crrt_initiation_dttm", right_on="recorded_dttm",
+                            by="encounter_block", direction="backward")
+    # Some weights are first recorded after CRRT start, so use that as a fall back
+    missing = back.loc[back["weight_kg"].isna(),
+                        ["encounter_block", "crrt_initiation_dttm"]]
+    fwd = pd.merge_asof(missing.sort_values("crrt_initiation_dttm"), right,
+                        left_on="crrt_initiation_dttm", right_on="recorded_dttm",
+                        by="encounter_block", direction="forward")
+
+    got = pd.concat([back[back["weight_kg"].notna()], fwd[fwd["weight_kg"].notna()]])
+    blocks_with_weight = blocks_with_init.merge(
+        got[["encounter_block", "weight_kg", "recorded_dttm"]]
+            .rename(columns={"recorded_dttm": "weight_dttm"}),
+        on="encounter_block", how="inner", validate="one_to_one")
+
+    strobe.append(("blocks entering stage 5", len(blocks_with_init)))
+    strobe.append(("blocks with a weight", len(blocks_with_weight)))
+
+    # How stale is that weight value? 
+    lag = ((blocks_with_weight["crrt_initiation_dttm"]
+            - blocks_with_weight["weight_dttm"]).dt.total_seconds() / 3600)
+    print(f"  hours from weight to initiation: median {lag.median():.1f}, "
+            f"p95 {lag.quantile(.95):.1f}, max {lag.max():.1f}")
+    print(f"  weights taken AFTER initiation (the fallback): {int((lag < 0).sum())}")
+    print(f"  weight kg: median {blocks_with_weight['weight_kg'].median():.1f}, "
+            f"p1 {blocks_with_weight['weight_kg'].quantile(.01):.1f}, "
+            f"p99 {blocks_with_weight['weight_kg'].quantile(.99):.1f}")
+
+    print("\nSTROBE, stage 5")
+    for label, n in strobe:
+        print(f"  {label:<38} {n:>9,}")
+
+    return blocks_with_weight, strobe
+
+# %%
+blocks_with_weight, strobe_5 = stage_5_weight(blocks_with_init, vit, mapping)
 
 # ---------------------------------------------------------------------------
 # Stage 6: The effluent dose

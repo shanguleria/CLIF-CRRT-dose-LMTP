@@ -87,6 +87,14 @@ for _col in DOSE_FLOWS:
         print(f"  {_col}: {int(_bad.sum()):,} values outside [{_lo}, {_hi}] set to null")
     crrt.loc[_bad, _col] = pd.NA
 
+# The arithmetic ceiling a dose can reach IF the bounds above were applied: every
+# dose-eligible flow at its maximum, over the minimum plausible weight. Derived, not
+# written down, so it cannot drift when a bound changes. This is not a clinical
+# limit (a real dose is 20-35); it is the point past which a value is proof that
+# the bounds did not run.
+DOSE_CEILING = sum(outliers[c][1] for c in DOSE_FLOWS) / outliers["weight_kg"][0]
+print(f"  bounded-dose arithmetic ceiling: {DOSE_CEILING:,.0f} mL/kg/hr")
+
 print(f"crrt: {len(crrt):,} rows   hosp: {len(hosp):,} rows")
 print(f"adt: {len(adt):,} rows")
 print(f"diag: {len(diag):,} rows   esrd codes: {len(ESRD_CODES)}")
@@ -510,43 +518,82 @@ blocks_with_weight, strobe_5 = stage_5_weight(blocks_with_init, vit, mapping)
 # ---------------------------------------------------------------------------
 # Stage 6: The effluent dose
 # ---------------------------------------------------------------------------
-
-def stage_6_dose():
+# %%
+def stage_6_dose(blocks_with_weight, crrt, mapping):
     """Compute delivered effluent dose in mL/kg/hr, modality-agnostic.
 
     Sums dialysate + pre-filter + post-filter replacement for every dose-eligible
     mode in a modality-agnostic fashion.
     """
-print(f"  stage 6 input: {len(blocks_with_weight):,} blocks")
-strobe = []
+    print(f"  stage 6 input: {len(blocks_with_weight):,} blocks")
+    strobe = []
 
-d = crrt.merge(mapping, on="hospitalization_id", how="left", validate="many_to_one")
-d = d.merge(blocks_with_weight[["encounter_block", "crrt_initiation_dttm",
-                                    "weight_kg"]],
-                on="encounter_block", how="inner", validate="many_to_one")
-
-
-d["effluent_ml_hr"] = d[DOSE_FLOWS].sum(axis=1, min_count=1)
-n_no_flow = int(d["effluent_ml_hr"].isna().sum())
-d = d[d["effluent_ml_hr"].notna()]
-# Go from mL/hr to mL/kg/hr based on most recent weight
-d["dose_ml_kg_hr"] = d["effluent_ml_hr"] / d["weight_kg"]
-d["hours_from_init"] = ((d["recorded_dttm"] - d["crrt_initiation_dttm"])
-                        .dt.total_seconds() / 3600)
-
-n_pre = len(d)
-dose_series = d.loc[d["hours_from_init"].between(0, EXPOSURE_WINDOW_H),
-                    ["encounter_block", "recorded_dttm", "hours_from_init",
-                        "effluent_ml_hr", "weight_kg", "dose_ml_kg_hr"]].copy()
-print(f"  records inside the 0-{EXPOSURE_WINDOW_H}h window: "
-        f"{len(dose_series):,} of {n_pre:,}")
+    d = crrt.merge(mapping, on="hospitalization_id", how="left", validate="many_to_one")
+    d = d.merge(blocks_with_weight[["encounter_block", "crrt_initiation_dttm",
+                                        "weight_kg"]],
+                    on="encounter_block", how="inner", validate="many_to_one")
 
 
+    d["effluent_ml_hr"] = d[DOSE_FLOWS].sum(axis=1, min_count=1)
+    n_no_flow = int(d["effluent_ml_hr"].isna().sum())
+    d = d[d["effluent_ml_hr"].notna()]
+    # Go from mL/hr to mL/kg/hr based on most recent weight
+    d["dose_ml_kg_hr"] = d["effluent_ml_hr"] / d["weight_kg"]
+    d["hours_from_init"] = ((d["recorded_dttm"] - d["crrt_initiation_dttm"])
+                            .dt.total_seconds() / 3600)
+
+    n_pre = len(d)
+    dose_series = d.loc[d["hours_from_init"].between(0, EXPOSURE_WINDOW_H),
+                        ["encounter_block", "recorded_dttm", "hours_from_init",
+                            "effluent_ml_hr", "weight_kg", "dose_ml_kg_hr"]].copy()
+    print(f"  records inside the 0-{EXPOSURE_WINDOW_H}h window: "
+            f"{len(dose_series):,} of {n_pre:,}")
+
+    with_dose = set(dose_series["encounter_block"])
+    blocks_with_dose = blocks_with_weight[
+        blocks_with_weight["encounter_block"].isin(with_dose)]
+    assert len(blocks_with_dose) == len(blocks_with_weight), (
+            f"{len(blocks_with_weight) - len(blocks_with_dose)} blocks lost a dose "
+            "series they should structurally have; check the flow bounds")
+
+    strobe.append(("blocks entering stage 6", len(blocks_with_weight)))
+    strobe.append(("blocks with a dose series", len(blocks_with_dose)))
+
+    # Dose diagnostics at each Tau node
+    z = int((dose_series["dose_ml_kg_hr"] == 0).sum())
+    print(f"  dose mL/kg/hr: median {dose_series['dose_ml_kg_hr'].median():.1f}, "
+            f"p1 {dose_series['dose_ml_kg_hr'].quantile(.01):.1f}, "
+            f"p99 {dose_series['dose_ml_kg_hr'].quantile(.99):.1f}, "
+            f"max {dose_series['dose_ml_kg_hr'].max():.1f}")
+    print(f"  exactly zero: {z:,} records ({100 * z / len(dose_series):.1f}%)")
+
+    for h in NODE_HOURS:
+        n = dose_series.loc[dose_series["hours_from_init"].between(h, h + 24),
+                            "encounter_block"].nunique()
+        print(f"    node {h:>2}-{h + 24:>2}h: {n:,} blocks "
+                f"({100 * n / len(blocks_with_dose):.0f}%)")
+
+    # Not a clinical limit (a real dose is 20-35). This is the point past which a
+    # value proves the flow bounds did not run: every dose-eligible flow at its
+    # ceiling over the minimum plausible weight.
+    assert dose_series["dose_ml_kg_hr"].max() <= DOSE_CEILING, (
+        f"max dose {dose_series['dose_ml_kg_hr'].max():,.1f} exceeds the arithmetic "
+        f"ceiling of {DOSE_CEILING:,.0f} mL/kg/hr; the flow outlier bounds did not run "
+        "(re-run the config cell if you are in an interactive session)")
+
+    print("\nSTROBE, stage 6")
+    for label, n in strobe:
+        print(f"  {label:<38} {n:>9,}")
+
+    return blocks_with_dose, dose_series, strobe
+
+# %%
+blocks_with_dose, dose_series, strobe_6 = stage_6_dose(blocks_with_weight, crrt, mapping)
 
 # ---------------------------------------------------------------------------
 # Stage 7: Outcomes
 # ---------------------------------------------------------------------------
-
+# %%
 def stage_7_outcomes():
     """Death, event datetime, and 30-day mortality anchored to CRRT initiation.
 

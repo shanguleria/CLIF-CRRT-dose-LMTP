@@ -79,13 +79,12 @@ docs/
 
 # --- Editors / OS ------------------------------------------------------------
 .DS_Store
+# Editor config is not project infrastructure. The environment is pinned for
+# everyone, in any editor, by .python-version + pyproject.toml + uv.lock, and is
+# entered with `uv run`. An editor-specific settings file only re-states that for
+# one editor's users, and imposes style preferences on everyone else.
+.vscode/
 .idea/
-# .vscode is tracked only for the two files that make the repo work correctly
-# out of the box (interpreter path, recommended extensions). Personal settings
-# like launch.json stay local.
-.vscode/*
-!.vscode/settings.json
-!.vscode/extensions.json
 
 # --- Rendered artifacts ------------------------------------------------------
 # NOTE: deliberately NOT a blanket `*.pdf` / `*.html` ignore (the sibling repo

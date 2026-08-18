@@ -11,7 +11,8 @@ Deliberately NOT produced here: baseline labs, SOFA, Table 1 covariates. Those
 are computed per exposure node in 02_build_lmtp_df.py, because the L_t -> A_t
 ordering requires them measured at each node rather than once at baseline.
 
-Built stage by stage. See docs/clif_cohort_tutorial.md for the walkthrough.
+Built stage by stage. The walkthrough lives in the private repo at
+crrt-manuscript-tools/lmtp-docs/clif_cohort_tutorial.md (symlinked here as docs/).
 
 DATA SAFETY: this script reads protected patient data. Print aggregates only,
 never rows. Outputs split into output/intermediate_phi/ (patient-level, stays at

@@ -15,12 +15,18 @@
 #   CLAUDE.md  TRACKED. Deliberately written with no site named: it says "the
 #              coordinating site" and "one participating institution" throughout.
 #              It is useful to anyone working on this code, so it ships.
-#   docs/      TRACKED. The cohort tutorial names only UCMC, which is this site
-#              naming itself in config values and output filenames.
+#   docs/      IGNORED, and a symlink to ../crrt-manuscript-tools/lmtp-docs.
+#              The cohort tutorial is built around worked numbers from the
+#              coordinating site: its cohort counts, its 67.7% in-hospital
+#              mortality, and a detailed account of its EHR charting defects.
+#              Naming only UCMC was the wrong test; the content is the issue.
+#              A site-facing METHODS.md without site-specific numbers should
+#              replace it here.
 #
-# Before adding anything to .claude/ or docs/, ask whether it names another site.
-# History was rewritten on 2026-08-18 to purge .claude/ from all 45 commits, so
-# do not restore it here by un-ignoring it.
+# Before adding a tracked file, ask whether it carries any site's numbers, not
+# just whether it names a site.
+# History was rewritten on 2026-08-18 to purge .claude/ and docs/ from history, so
+# do not restore either by un-ignoring it.
 # =============================================================================
 
 # --- Site configuration (never leaves the site) ------------------------------
@@ -65,9 +71,11 @@ renv/sandbox/
 .Rproj.user/
 *.Rproj
 
-# --- Internal planning: symlinked to the private repo, never tracked here -----
+# --- Internal planning and docs: symlinked to the private repo, never tracked --
 .claude
 .claude/
+docs
+docs/
 
 # --- Editors / OS ------------------------------------------------------------
 .DS_Store

@@ -15,15 +15,23 @@ manuscript for positivity violations. It is **not** a re-run of that analysis:
 the MTP framing changes the estimand so that positivity is structurally
 attainable rather than something to be truncated into submission.
 
-## Current status: scaffold only
+## Current status
 
-Nothing is estimable yet. `02_build_lmtp_df.py` and `03_lmtp_fit.R` do not
-exist, no code is vendored, and no R packages are installed. What exists is the
-repo, the pinned Python environment, the design spec, and the rescued
-feasibility evidence.
+`code/01_build_cohort.py` is complete and runs end to end, from raw CLIF 2.1.0
+tables to written artifacts:
 
-**The build order is in `.claude/lmtp_feasibility_findings.md` section 7.** Step 1
-of it is a blocking decision, described below.
+```
+166,814 hospitalizations -> 166,677 encounter blocks -> 3,152 with CRRT
+-> 2,246 after ESRD -> 2,147 with a t=0 -> 2,144 with a weight
+-> 2,144 with a dose series -> 2,144 with an outcome
+```
+
+It writes `cohort.parquet` and `dose_series.parquet` to `output/intermediate_phi/`,
+and a provenance-stamped STROBE table to `output/final_no_phi/`.
+
+`02_build_lmtp_df.py` and `03_lmtp_fit.R` do not exist, and no R packages are
+installed. **Step 1 of the build order is a blocking decision**, described below,
+and 02 cannot be written correctly until it is made.
 
 ## The blocking decision, before any dataset code
 
@@ -92,29 +100,31 @@ Related: 91% of exposure variance at the coordinating site is between-patient
 is carried by the roughly 20-30% of patients whose dose actually moves, so
 effective sample size at nodes 2 and 3 is far below n.
 
-## Vendoring contract
+## The cohort is written here, not vendored
 
-`00_cohort.py` and its four dependencies are **copied verbatim** from
-`CLIF-epidemiology-of-CRRT` at SHA `ee4774b`, never rewritten. That is where the
-science lives: the ESRD gate, CRRT initiation per encounter block, the
-modality-agnostic effluent formula, the first-3h dose median, the 30-day anchor
-to CRRT initiation. Reimplementing it forks the cohort definition, and then two
-papers from the same consortium report two different Ns.
+An earlier plan was to copy `00_cohort.py` and four dependencies verbatim from
+`CLIF-epidemiology-of-CRRT`. **That was abandoned on 2026-08-16.** That file is a
+converted Jupyter notebook (55 cells, 43% blanks and comments, ~900 lines of
+diagnostics) with no callable API, so vendoring it meant adopting 3,281 lines to
+reach roughly 600 of actual logic. Separately, `clifpy` 0.4.9 already provides
+`stitch_encounters`, `compute_sofa_polars`, `create_wide_dataset` and
+`apply_outlier_handling`, which covered most of what the manifest listed.
 
-- Manifest and pin: `code/vendor/VENDOR_SHA`
-- Sync: `bash code/vendor/sync_vendor.sh`
-- Guard: `uv run pytest tests/test_vendor_integrity.py` asserts byte-equality
+`code/01_build_cohort.py` is therefore written against clifpy primitives.
+`code/vendor/` retains the pin and the byte-equality test for the two **config**
+files taken from that repo at SHA `ee4774b`
+(`clif_data_requirements.yaml`, `outlier_config.json`).
 
-**Never edit a vendored file in place.** To take an upstream change, move the SHA
-and re-sync in one deliberate commit.
+**The consequence to keep in mind:** because the cohort logic is reimplemented
+rather than copied, matching the sibling's N is a **claim to be tested**, not a
+fact. Current standing is 2,144 blocks against its 2,145, with one block of the
+difference explained by a documented ESRD-grain divergence. See
+`config/lmtp_design.json` under `cohort._must_reconcile`.
 
-Do **not** bring `02_construct_crrt_tableone.py`, `03_crrt_epidemiology.py`,
-`03b`, `02c`, `06`, `04_build_causal_df.py`, `05`, `05b`, or the sibling's renv.
-
-**Do not inherit `04`'s schema.** It reads `tableone_analysis_df.parquet`, so its
-baseline block is coupled to the Table 1 script. More importantly, **`04`
-violates the `L_t -> A_t` ordering** by pairing a 0-24h mean dose with covariates
-measured at 24h. Do not reproduce that.
+**Do not inherit `04_build_causal_df.py`'s schema.** It reads
+`tableone_analysis_df.parquet`, so its baseline block is coupled to the Table 1
+script, and it **violates the `L_t -> A_t` ordering** by pairing a 0-24h mean dose
+with covariates measured at 24h.
 
 ## Protocol settings versus site settings
 
@@ -147,10 +157,14 @@ than silent.
 ## Repo conventions
 
 Read `.gitignore`'s header before adding a rule to it. This repo is **private**,
-so unlike the sibling consortium repo, **`.claude/` and `CLAUDE.md` are tracked**
-(as would be a `docs/`, when there is something to put in one). `.claude/lmtp_feasibility_findings.md` is the entire evidentiary basis
-for the project and previously existed as one untracked copy under a gitignored
-path; ignoring `.claude/` here would recreate that.
+This repo is **public**, because it ships to consortium sites. `.claude/` and
+`docs/` are therefore **gitignored symlinks** into the private
+`crrt-manuscript-tools` repo (`lmtp-claude/`, `lmtp-docs/`), which holds the
+feasibility audit, the internal planning, and the cohort tutorial. All three carry
+per-site or coordinating-site numbers that cannot be public. Both were purged from
+this repo's history on 2026-08-18; do not restore them by un-ignoring.
+
+`CLAUDE.md` and `README.md` ship, and are written with no site named.
 
 - Python: **uv**, `requires-python >=3.11,<3.12`, `clifpy==0.4.9` exact. The
   compute stack is pinned exactly for cross-site numeric reproducibility;

@@ -91,3 +91,10 @@ docs/
 # has one). Figures and rendered reports are the product here, so only the
 # transient R plot dump is excluded.
 Rplots.pdf
+
+# --- Reference papers: read locally, never redistributed ----------------------
+# Publisher PDFs are copyrighted (Karger, Wiley, Elsevier, ...). This repo is
+# public, so committing one would be redistribution. Ignore the PDFs, track the
+# README that cites them so a site knows what to obtain and why.
+references/*
+!references/README.md

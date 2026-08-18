@@ -30,23 +30,32 @@ It writes `cohort.parquet` and `dose_series.parquet` to `output/intermediate_phi
 and a provenance-stamped STROBE table to `output/final_no_phi/`.
 
 `02_build_lmtp_df.py` and `03_lmtp_fit.R` do not exist, and no R packages are
-installed. **Step 1 of the build order is a blocking decision**, described below,
-and 02 cannot be written correctly until it is made.
+installed. The decision that used to block 02 was made on 2026-08-18, so **02 is
+now writable**.
 
-## The blocking decision, before any dataset code
+## The estimand decision that used to block dataset code
 
 **How to handle CRRT discontinuation.** The exposure is undefined once CRRT
 stops, and 39% of encounter blocks at the coordinating site have no third node.
-Three options, and they are **three different estimands, not three
-implementations of one**:
+**RESOLVED 2026-08-18.** `discontinuation_handling: "dose_zero_unshifted"`.
 
-1. treat liberation as a competing event;
-2. carry dose forward as 0, which silently changes the question to "dose or no dose";
-3. define the policy only while the patient is on therapy.
+CRRT liberation is neither a competing event nor censoring. It is an exposure value
+of **zero, left unshifted by the policy**.
 
-This determines the node schema, so it comes before `02_build_lmtp_df.py`. It is
-recorded as `discontinuation_handling: null` in `config/lmtp_design.json`, and
-that null is deliberate. Do not pick one implicitly while writing dataset code.
+- Not a competing event: liberation does not preclude in-hospital death, and
+  `compete` is correctly occupied by discharge alive.
+- Not censoring: that would estimate the effect in a world where nobody is liberated
+  within 72h, and positivity fails for recovering patients.
+- Safe because the self-limiting shift leaves zero unchanged (`0 - delta < floor` for
+  every delta in the ladder), so the policy can never move a patient onto or off
+  therapy. That is what stops this being a covert "dose or no dose" contrast.
+
+The paired decision is the **node statistic**: a time-weighted mean over charted CRRT
+records in each node, `sum(dose_h) / n_charted_hours`. Charted zero-dose intervals
+enter; uncharted gaps are not imputed. One rule for every cause of a zero-dose
+interval: liberation, SCUF-only, machine downtime, filter clotting. Full reasoning
+and the measured comparison live in `exposure._node_statistic_why` and
+`_discontinuation_handling_RESOLVED` in `config/lmtp_design.json`.
 
 ## Methods are inherited BY REFERENCE. Do not copy them.
 
@@ -74,7 +83,7 @@ Machine-readable in `config/lmtp_design.json`; that file is the
 | FLOOR | **15**, sensitivity 20 | FLOOR=20 collapses coverage to 4-11% at two sites |
 | Shift form | **self-limiting, never clamped** | `lmtp` supplies no guard and will not warn you. Clamping breaks invertibility |
 | tau | **3 nodes at 0/24/48h** | Retention >= 38% at 48h everywhere; 72h thin at one site. Do not exceed tau=4 |
-| Node statistic | **windowed median** | The archived MSM used means, which reintroduce the charting-lag artefact |
+| Node statistic | **time-weighted mean** | Delivered dose. Charted zeros in, uncharted gaps not imputed. Matches Quickfall/Koyner 2026 at the same institution. Supersedes windowed median, whose charting-lag rationale does not survive a 24h node |
 | Estimator | `lmtp_sdr` primary, `lmtp_tmle` secondary | Diaz's own applied choice; g-comp and IPW as diagnostics |
 | Competing event | **discharge alive**, via `compete` | Mortality is in-hospital by construction |
 | Site admission | **band occupancy under the shift** | Outcome-blind and pre-fit; replaces the `<100 high-dose-arm` rule |

@@ -57,6 +57,15 @@ interval: liberation, SCUF-only, machine downtime, filter clotting. Full reasoni
 and the measured comparison live in `exposure._node_statistic_why` and
 `_discontinuation_handling_RESOLVED` in `config/lmtp_design.json`.
 
+Charted zero versus uncharted gap is pre-specified as a **bracket**, not a single
+choice (`exposure._node_statistic_sensitivity_LADDER`): S1 excludes gaps from the
+denominator (primary, upper bound), S2 counts gaps inside the charted span as
+downtime, S3 counts all node time (blocked on the discharge-timestamp defect). S1 is
+primary because gaps are not random: mortality falls from 73% at no gap to 53% at
+>6h of gap, so S2 loads the exposure with recovery status. **Consequence for 02: the
+node covariates must carry the liberation predictors** (urine output, vasopressors,
+fluid balance, SOFA), or S2 is confounded in a direction already known.
+
 ## Methods are inherited BY REFERENCE. Do not copy them.
 
 The methodological source of truth is the sibling **fluid_ARDS** project. Those

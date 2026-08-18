@@ -1,5 +1,6 @@
 {
     "site_name": "Your_Site_Name",
+    "clif_version": "2.1.0",
     "data_directory": "/path/to/clif/tables/",
     "filetype": "parquet",
     "timezone": "America/Chicago",

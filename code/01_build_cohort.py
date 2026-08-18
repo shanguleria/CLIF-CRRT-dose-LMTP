@@ -26,7 +26,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
-from clifpy import Adt, CrrtTherapy, Hospitalization, HospitalDiagnosis, Vitals, stitch_encounters
+from clifpy import Adt, CrrtTherapy, Hospitalization, HospitalDiagnosis, Patient, Vitals, stitch_encounters
 
 try:
     REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -73,13 +73,14 @@ vit = Vitals.from_file(
     filters={"vital_category": ["weight_kg"]},
 ).df
 
-# Flow bounds are applied ONCE, here, before anything reads a flow. Stage 4 uses
-# the flows to decide when therapy started and Stage 6 uses them to compute the
-# dose; applying the bounds in only one of those made the two disagree, so a
-# record with an impossible flow could start the clock and then be discarded as
-# uncomputable. A value too implausible to be a dose is too implausible to anchor
-# t = 0. Sets out-of-range values to null; never drops the row, which may still
-# carry a valid flow in another column.
+pat = Patient.from_file(**_kw).df
+
+# Defining the outcome of mortality
+DEATH_DISPOSITIONS = {"expired", "hospice"}
+OUTCOME_HORIZON_D = design["time"]["outcome_horizon_days"]
+
+
+# Flow bounds are applied ONCE, here, before anything reads a flow. 
 for _col in DOSE_FLOWS:
     _lo, _hi = outliers[_col]
     _bad = crrt[_col].notna() & ~crrt[_col].between(_lo, _hi)
@@ -594,13 +595,58 @@ blocks_with_dose, dose_series, strobe_6 = stage_6_dose(blocks_with_weight, crrt,
 # Stage 7: Outcomes
 # ---------------------------------------------------------------------------
 # %%
-def stage_7_outcomes():
+def stage_7_outcomes(blocks_with_dose, pat):
     """Death, event datetime, and 30-day mortality anchored to CRRT initiation.
 
-    In-hospital by construction: death comes from discharge disposition, hospice
-    counts as a death, and death_dttm is missing for a large share of deaths.
+    In-hospital by construction: death comes from discharge disposition due to unreliable death_dttm
+    , hospice discharge counts as a death.
     """
-    raise NotImplementedError("Stage 7: not yet designed")
+    print(f"  stage 7 input: {len(blocks_with_dose):,} blocks")
+    strobe = []
+
+    b = blocks_with_dose.merge(pat[["patient_id", "death_dttm"]],
+                                on="patient_id", how="left", validate="many_to_one")
+
+    disp = b["discharge_category"].str.lower()
+    b["died_in_hospital"] = disp.isin(DEATH_DISPOSITIONS)
+
+    # Death as defined by discharge not death_dttm
+    b["event_dttm"] = b["block_discharge_dttm"].where(b["died_in_hospital"])
+    b["days_to_event"] = ((b["event_dttm"] - b["crrt_initiation_dttm"])
+                            .dt.total_seconds() / 86400)
+
+    # Mortality in the hospital at 30d post initiation of CRRT
+    b["mortality_30d"] = (b["died_in_hospital"]
+                            & (b["days_to_event"] <= OUTCOME_HORIZON_D)).fillna(False)
+    impossible = int((b["died_in_hospital"] & (b["days_to_event"] < 0)).sum())
+    if impossible:
+        print(f"  WARNING: {impossible} deaths timed BEFORE CRRT initiation. Revisit ETL.")
+
+        n_died = int(b["died_in_hospital"].sum())
+    disagree = b["died_in_hospital"] & b["death_dttm"].notna()
+    gap_h = ((b["death_dttm"] - b["block_discharge_dttm"]).dt.total_seconds() / 3600)[disagree]
+
+    print(f"  died in hospital: {n_died:,} ({100*n_died/len(b):.1f}%), "
+            f"of which hospice {int((disp == 'hospice').sum()):,}")
+    print(f"  death_dttm present for {int(disagree.sum()):,} of them "
+            f"({100*disagree.sum()/n_died:.0f}%); vs discharge it differs by median "
+            f"{gap_h.median():.1f}h, |diff|>24h for {int((gap_h.abs() > 24).sum())}")
+    print(f"  days from initiation to death: median {b['days_to_event'].median():.1f}, "
+            f"p95 {b['days_to_event'].quantile(.95):.1f}, max {b['days_to_event'].max():.1f}")
+
+    strobe.append(("blocks entering stage 7", len(blocks_with_dose)))
+    strobe.append(("blocks with an outcome", len(b)))
+    print("\nSTROBE, stage 7")
+    for label, n in strobe:
+        print(f"  {label:<38} {n:>9,}")
+    print(f"  {OUTCOME_HORIZON_D}-day in-hospital mortality: "
+            f"{int(b['mortality_30d'].sum()):,} ({100*b['mortality_30d'].mean():.1f}%)")
+    print(f"  in-hospital mortality, any time  : {n_died:,} ({100*n_died/len(b):.1f}%)")
+
+    return b, strobe
+
+# %%
+cohort, strobe_7 = stage_7_outcomes(blocks_with_dose, pat)
 
 
 # ---------------------------------------------------------------------------

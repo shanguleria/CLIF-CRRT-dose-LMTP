@@ -275,9 +275,6 @@ def stage_3_exclude_esrd(blocks, diag, mapping):
 
 
 # %%
-# A NEW name, never a reassignment of `blocks`. Keeping the input intact makes
-# this cell safely re-runnable and leaves the pre-exclusion frame available, e.g.
-#   set(blocks["encounter_block"]) - set(blocks_no_esrd["encounter_block"])
 blocks_no_esrd, strobe_3 = stage_3_exclude_esrd(blocks, diag, mapping)
 
 # ---------------------------------------------------------------------------

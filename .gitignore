@@ -3,24 +3,24 @@
 #
 # READ THIS BEFORE ADDING A RULE.
 #
-# This repo is PRIVATE, and that changes what belongs in git relative to the
-# sibling consortium repo (CLIF-epidemiology-of-CRRT), which is public-facing
-# and therefore ignores `.claude`, `CLAUDE.md`, and `docs/`.
+# This repo is PUBLIC, because it ships to consortium sites. That decides what
+# belongs in git:
 #
-# Here those three are TRACKED ON PURPOSE:
+#   .claude/   IGNORED, and a symlink to ../crrt-manuscript-tools/lmtp-claude.
+#              It holds the LMTP feasibility audit, which names ten sites with
+#              their dose distributions, coverage and positivity-exclusion status,
+#              plus internal deliberations. None of that can be public. The
+#              private repo is the backed-up copy of record; this is only a view
+#              of it so Claude Code can read it locally.
+#   CLAUDE.md  TRACKED. Deliberately written with no site named: it says "the
+#              coordinating site" and "one participating institution" throughout.
+#              It is useful to anyone working on this code, so it ships.
+#   docs/      TRACKED. The cohort tutorial names only UCMC, which is this site
+#              naming itself in config values and output filenames.
 #
-#   .claude/   holds the LMTP feasibility findings, which are the entire
-#              evidentiary basis for this project. They previously lived in
-#              the sibling repo under `code/adhoc/` -- a gitignored path --
-#              and so existed as exactly one untracked, unbacked-up copy.
-#              This repo exists partly to fix that. Ignoring `.claude/` here
-#              would silently recreate the problem.
-#   CLAUDE.md  carries the inherited design decisions; memory is path-keyed
-#              and does not follow the code, so this file is the durable copy.
-#   docs/      deliverables the author reads. Untracked docs get lost.
-#
-# Do not "sync" this file with the sibling's. They are answering different
-# questions. See CLAUDE.md > Repo conventions.
+# Before adding anything to .claude/ or docs/, ask whether it names another site.
+# History was rewritten on 2026-08-18 to purge .claude/ from all 45 commits, so
+# do not restore it here by un-ignoring it.
 # =============================================================================
 
 # --- Site configuration (never leaves the site) ------------------------------
@@ -64,6 +64,10 @@ renv/sandbox/
 .Ruserdata
 .Rproj.user/
 *.Rproj
+
+# --- Internal planning: symlinked to the private repo, never tracked here -----
+.claude
+.claude/
 
 # --- Editors / OS ------------------------------------------------------------
 .DS_Store

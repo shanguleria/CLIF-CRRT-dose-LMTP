@@ -49,6 +49,10 @@ STITCH_HOURS = design["cohort"]["stitch_time_interval_hours"]
 
 ESRD_CODES = {c["code"] for c in design["cohort"]["esrd_exclusion"]["codes"]}
 
+DOSE_FLOWS = ["dialysate_flow_rate",
+              "pre_filter_replacement_fluid_rate",
+              "post_filter_replacement_fluid_rate"]
+
 _kw = dict(
     data_directory=config["data_directory"],
     filetype=config["filetype"],
@@ -116,7 +120,9 @@ def stage_1_base_population(hosp, crrt):
     as a list of (label, count) pairs; Stage 2 builds the actual cohort from the
     full tables, because stitching must see the whole population.
     """
-    # Facts about the INPUTS, captured before any filter reassigns hosp.
+    print(f"  stage 1 input: {len(hosp):,} hospitalizations")
+
+    # Facts about the INPUTS, captured before any filtering.
     site_years = hosp["admission_dttm"].dt.year
     site_first, site_last = site_years.min(), site_years.max()
     all_hosp_ids = set(hosp["hospitalization_id"])
@@ -124,16 +130,18 @@ def stage_1_base_population(hosp, crrt):
     strobe = []
     strobe.append(("all hospitalizations", len(hosp))) # Start with all hospitalizations
 
-    hosp = hosp[hosp["age_at_admission"] >= 18]
-    strobe.append(("adults (age >= 18)", len(hosp))) # Filter for only adults over 18yo
+    # `eligible` is the narrowing frame; `hosp` stays untouched so the parameter
+    # always means what the caller passed in.
+    eligible = hosp[hosp["age_at_admission"] >= 18]
+    strobe.append(("adults (age >= 18)", len(eligible))) # Filter for only adults over 18yo
 
-    year = hosp["admission_dttm"].dt.year
-    hosp = hosp[(year >= STUDY_YEAR_START) & (year <= STUDY_YEAR_END)]
-    strobe.append((f"admitted {STUDY_YEAR_START}-{STUDY_YEAR_END}", len(hosp))) # Filter for study years
+    year = eligible["admission_dttm"].dt.year
+    eligible = eligible[(year >= STUDY_YEAR_START) & (year <= STUDY_YEAR_END)]
+    strobe.append((f"admitted {STUDY_YEAR_START}-{STUDY_YEAR_END}", len(eligible))) # Filter for study years
 
     crrt_ids = set(crrt["hospitalization_id"])
-    hosp = hosp[hosp["hospitalization_id"].isin(crrt_ids)]
-    strobe.append(("received CRRT", len(hosp))) # Filter for only those hospitalizations with a CRRT record
+    eligible = eligible[eligible["hospitalization_id"].isin(crrt_ids)]
+    strobe.append(("received CRRT", len(eligible))) # Filter for only those hospitalizations with a CRRT record
 
     # Referential integrity: CRRT records whose hospitalization does not exist.
     # The .isin above drops these silently, so count them deliberately.
@@ -167,6 +175,8 @@ def stage_2_encounter_blocks(hosp, adt, crrt):
     
     Takes the full hospitalization table (i.e. not Stage 1's output) and finds partners\n
     for CRRT encounters across the whole table. Returns one row per encounter block. """
+
+    print(f"  stage 2 input: {len(hosp):,} hospitalizations")
 
     strobe = []
     # Creating DataFrames for a stitched hospitalization table, a stitched ADT table, and the mapping
@@ -238,6 +248,8 @@ def stage_3_exclude_esrd(blocks, diag, mapping):
     time scale: an ESRD code on ANY hospitalization in a block excludes the whole
     block. Returns the surviving blocks and the strobe additions.
     """
+    print(f"  stage 3 input: {len(blocks):,} blocks")
+
     strobe = []
 
     code = diag["diagnosis_code"].str.replace(".","",regex=False).str.lower()
@@ -259,19 +271,21 @@ def stage_3_exclude_esrd(blocks, diag, mapping):
     esrd_blocks = set(mapping.loc[
         mapping["hospitalization_id"].isin(esrd_hosp_ids), "encounter_block"])
 
+    # Output gets its own name, matching what the caller assigns it to. The
+    # parameter `blocks` is never reassigned, so it always means what was passed in.
     n_before = len(blocks)
-    blocks = blocks[~blocks["encounter_block"].isin(esrd_blocks)]
-    n_excluded = n_before - len(blocks)
-    assert n_excluded + len(blocks) == n_before, "blocks lost outside the filter"
+    blocks_no_esrd = blocks[~blocks["encounter_block"].isin(esrd_blocks)]
+    n_excluded = n_before - len(blocks_no_esrd)
+    assert n_excluded + len(blocks_no_esrd) == n_before, "blocks lost outside the filter"
 
     strobe.append(("blocks with pre-existing ESRD", n_excluded))
-    strobe.append(("blocks without ESRD", len(blocks)))
+    strobe.append(("blocks without ESRD", len(blocks_no_esrd)))
 
     print("\nSTROBE, stage 3")
     for label, n in strobe:
         print(f"  {label:<36} {n:>9,}")
 
-    return blocks, strobe
+    return blocks_no_esrd, strobe
 
 
 # %%
@@ -281,9 +295,22 @@ blocks_no_esrd, strobe_3 = stage_3_exclude_esrd(blocks, diag, mapping)
 # Stage 4: CRRT initiation, the index event
 # ---------------------------------------------------------------------------
 # %%
-def stage_4_crrt_initiation():
-    """Define t = 0 as the first crrt_therapy record per encounter block."""
-    raise NotImplementedError("Stage 4: not yet designed")
+def stage_4_crrt_initiation(blocks, crrt, mapping):
+    """Define t = 0 as the first crrt_therapy record per encounter block in which 
+    patient actually receives a nonzero CRRT dose."""
+print(f"  stage 4 input: {len(blocks):,} blocks")
+
+strobe = []
+
+c = crrt.merge(mapping, on="hospitalization_id", how="left", validate="many_to_one")
+c = c[c["encounter_block"].isin(set(blocks_no_esrd["encounter_block"]))]
+
+# Record modality mix and record encounters with SCUF for the whole record
+mode = c["crrt_mode_category"].str.lower()
+scuf_only = {b for b, m in c.groupby("encounter_block")["crrt_mode_category"]
+            if set(m.dropna().str.lower()) <= {"scuf"}}
+
+
 
 
 # ---------------------------------------------------------------------------

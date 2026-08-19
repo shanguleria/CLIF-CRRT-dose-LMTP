@@ -62,12 +62,22 @@
     "outcome_horizon_days": 30,
     "outcome_anchor": "CRRT initiation",
     "outcome_grid_days": [
+      1,
+      2,
       3,
       7,
       14,
       30
     ],
-    "_outcome_grid_why": "Exposure runs to day 3 but follow-up runs to day 30. The outcome nodes must be coarsened or the T x T influence-function covariance becomes ill-conditioned at small sites. Verify lmtp v1.5.4 mechanics for tau_trt < tau_outcome before relying on this."
+    "_outcome_grid_why": "SIX periods, CHANGED 2026-08-18 from [3, 7, 14, 30]. Exposure runs to day 3 but follow-up runs to day 30, and lmtp requires ONE common time grid: for a survival outcome tau is the number of outcome columns (R/Task.R:125-130), and trt must be of length 1 or exactly tau (R/checks.R:29-40), while cens, compete and time_vary must each be length tau (R/Vars.R:12-18). The previous 4-point grid against 3 exposure nodes was therefore not expressible and failed with \"Assertion on 'trt' failed: 'trt' should be of length 1 or 4\". Days 1, 2 and 3 are the exposure nodes at 0-24/24-48/48-72h; days 7, 14 and 30 carry the outcome curve past the end of the policy. The grid is still coarsened in the tail so the T x T influence-function covariance stays conditionable at small sites. Full derivation with source citations in docs/lmtp_time_grid_decision.md.",
+    "exposure_periods": [
+      1,
+      2,
+      3
+    ],
+    "_exposure_periods_why": "The policy intervenes in periods 1-3 ONLY. Periods 4-6 carry an exposure column so the vectors are length tau, but the shift function returns the observed value there. shift is applied one column at a time and receives the column NAME (R/shift.R:39-45, out[[a]] <- .f(data, a)), which is what makes a node-conditional policy expressible. VERIFIED on synthetic data 2026-08-18: intervening only in periods 1-3 of a 6-period grid returns density ratios of exactly 1.000 at every quantile in periods 4, 5 and 6, so the unintervened periods multiply into the cumulative weight without changing it and cost nothing in positivity. The exposure column for periods 4-6 is a constant 0: there is no therapy to intervene on and the shift leaves it untouched. Verify the learner stack tolerates a zero-variance predictor before committing; SL.glm does.",
+    "post_window_covariates": "carry_forward_via_null_time_vary",
+    "_post_window_covariates_why": "PI decision 2026-08-18. Periods 4-6 introduce NO new covariates. time_vary is passed as list(L1, L2, L3, NULL, NULL, NULL), which R/Vars.R:18 permits (types = c('NULL','character')) and which was verified to run. The alternative was to compute genuine worst-value covariates over the wide post-window periods, but a 'worst value over day 7 to 14' is a materially coarser variable than a 24h node covariate and pretending the two are comparable is worse than carrying the last node forward and saying so. COUPLING TO k, AND IT IS NOT OPTIONAL: this works because with k = Inf the outcome regressions at periods 4-6 still condition on the full history including the node-3 covariates. Under a truncated k those periods would condition on NOTHING, since their own time_vary entries are NULL. If k is ever truncated for stability, the carry forward must instead be implemented as explicit duplicated columns. Measured on synthetic data: estimate 0.5822 at k = Inf against 0.5664 at k = 1."
   },
   "outcome": {
     "primary": "30-day in-hospital mortality",
@@ -460,13 +470,16 @@
     "primary": "lmtp_sdr",
     "secondary": "lmtp_tmle",
     "diagnostics": [
-      "lmtp_gcomp",
-      "lmtp_ipw"
+      "sdr_vs_tmle_agreement",
+      "density_ratio_distribution",
+      "trimmed_fraction"
     ],
     "_why_sdr": "Diaz's own applied choice. See fluid_ARDS/plans/lmtp_discussion.md S6.3 for the real tradeoff against TMLE.",
     "package": "lmtp",
     "package_version_target": "1.5.4",
-    "_positivity_check_node2": "Fit the node-2 treatment mechanism BOTH WITH AND WITHOUT bicarbonate, and compare the density-ratio distributions. Bicarbonate, potassium and BUN are all cleared or manipulated by CRRT, so at nodes 2 and 3 they are partly a readout of A_1. That is legitimate for L_t, since a time-varying confounder affected by prior treatment is exactly what LMTP handles, but it sharpens the conditional density ratio and feeds the recorded residual risk that A2 | A1 is near-deterministic (r = 0.75). This is a diagnostic, not a covariate-selection rule: do not drop bicarbonate on the basis of the effect estimate."
+    "_positivity_check_node2": "Fit the node-2 treatment mechanism BOTH WITH AND WITHOUT bicarbonate, and compare the density-ratio distributions. Bicarbonate, potassium and BUN are all cleared or manipulated by CRRT, so at nodes 2 and 3 they are partly a readout of A_1. That is legitimate for L_t, since a time-varying confounder affected by prior treatment is exactly what LMTP handles, but it sharpens the conditional density ratio and feeds the recorded residual risk that A2 | A1 is near-deterministic (r = 0.75). This is a diagnostic, not a covariate-selection rule: do not drop bicarbonate on the basis of the effect estimate.",
+    "_diagnostics_why": "CHANGED 2026-08-18. This key previously named lmtp_gcomp and lmtp_ipw. Both are DEFUNCT in lmtp: they live in R/defunct.R and call lifecycle::deprecate_stop(), so they raise an error rather than a warning, and they were removed in 1.5.0. No reachable version of the package offers them, because 1.5.0 is also the version that added the competing-risks support this design depends on. The package's own message: 'IPW requires the use of correctly pre-specified parametric models for valid statistical inference. Use lmtp_tmle() or lmtp_sdr() instead.' The replacement diagnostics are what the package actually supports and what the recorded positivity risk needs: agreement between the SDR primary and the TMLE secondary, and the density-ratio distribution plus trimmed fraction read off the fitted object's density_ratios matrix (n x tau).",
+    "package_version_verified": "1.5.4 on R 4.3.1, 2026-08-18. See code/R_PACKAGES.md."
   },
   "site_admission": {
     "rule": "band_occupancy_under_the_shift",

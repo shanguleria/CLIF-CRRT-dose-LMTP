@@ -337,8 +337,15 @@ def stage_2_exposure(skeleton, dose_series, cohort):
     empty = e["n_charted_hours"] == 0
     e["node_status"] = np.where(~e["at_risk"], "post_event",
                         np.where(empty, "liberated", "on_crrt"))
-    # The empty-node rule. Liberation is an exposure of zero that the policy leaves
-    # alone, because 0 - delta < floor for every delta in the ladder.
+    # The empty-node rule, READ from config rather than assumed. If the protocol ever names
+    # a different rule this stops the run instead of silently applying the old one.
+    rule = design["exposure"]["empty_node_rule"]
+    if rule != "zero_unshifted":
+        raise NotImplementedError(
+            f"exposure.empty_node_rule is {rule!r}; this script implements only "
+            f"'zero_unshifted'. Implement the new rule or revert the config.")
+    # Liberation is an exposure of zero that the policy leaves alone, because
+    # 0 - delta < floor for every delta in the ladder.
     lib = e["node_status"] == "liberated"
     e.loc[lib, ["a_s1", "a_s2"]] = 0.0
 
@@ -529,8 +536,23 @@ def _pf_and_sf(labs, spo2, resp):
     print(f"    spo2 <= {SPO2_CEILING}: {len(s):,} of {len(spo2):,} readings usable")
     sf = pair(s, "recorded_dttm", "vital_value", "sf_ratio")
 
-    return (summarise_windows(pf, "pf_ratio", DEFS["pf_ratio"]["summary"], "pf_ratio"),
-            summarise_windows(sf, "sf_ratio", DEFS["sf_ratio"]["summary"], "sf_ratio"))
+    pf_w = summarise_windows(pf, "pf_ratio", DEFS["pf_ratio"]["summary"], "pf_ratio")
+    sf_w = summarise_windows(sf, "sf_ratio", DEFS["sf_ratio"]["summary"], "sf_ratio")
+
+    # pf_source: which oxygenation measure actually populated this block-node. The config
+    # has always specified this indicator (definitions.pf_source) and an earlier version of
+    # this function never built it, so the frame silently lacked the provenance signal the
+    # design relies on. It matters because arterial sampling is not random: sicker patients
+    # get more blood gases, so "which measure exists" carries information of its own.
+    src = pf_w[["encounter_block", "node"]].assign(pf_source="pf")
+    only_sf = sf_w.merge(src, on=["encounter_block", "node"], how="left")
+    only_sf = only_sf.loc[only_sf["pf_source"].isna(), ["encounter_block", "node"]]
+    src = pd.concat([src, only_sf.assign(pf_source="sf")], ignore_index=True)
+    if len(src):
+        n_pf = int((src["pf_source"] == "pf").sum())
+        n_sf = int((src["pf_source"] == "sf").sum())
+        print(f"    pf_source: {n_pf:,} block-nodes from P/F, {n_sf:,} fall back to S/F")
+    return pf_w, sf_w, src
 
 
 def _nee(meds, vitals_weight):
@@ -596,7 +618,7 @@ def _nee(meds, vitals_weight):
     ino_hourly["hours_from_init"] = ino_hourly["hour_bin"]
 
     a = summarise_windows(nee_hourly, "nee", DEFS["nee"]["summary"].split()[0], "nee")
-    b = summarise_windows(ino_hourly, "inotrope", "any", "inotrope")
+    b = summarise_windows(ino_hourly, "inotrope", DEFS["inotrope"]["summary"], "inotrope")
     nz = a.loc[a["nee"] > 0, "nee"]
     print(f"    nee       {len(a):,} block-nodes, {len(nz):,} on any vasopressor; "
           f"median {nz.median():.3f}  p95 {nz.quantile(.95):.3f} mcg/kg/min-equivalent"
@@ -710,8 +732,8 @@ def stage_4_covariates(obs, block_map, cohort, repo_root):
     frames = []
 
     print("  oxygenation:")
-    pf, sf = _pf_and_sf(labs, spo2, resp)
-    frames += [pf, sf]
+    pf, sf, pf_src = _pf_and_sf(labs, spo2, resp)
+    frames += [pf, sf, pf_src]
 
     print("  simple labs:")
     for var, cat in LAB_VARS.items():
@@ -994,6 +1016,36 @@ def stage_7_assemble(exposure, cov_long, static, outcomes, cci_cols):
     assert wide[trt].notna().all().all(), "an exposure column still holds NA"
     assert wide[out_cols].notna().all().all(), "an outcome column holds NA"
     assert len(wide) == len(static), "assembly changed the row count"
+
+    # ---------------------------------------------------------------------
+    # EVERY COVARIATE THE CONFIG DECLARES MUST REACH A COLUMN.
+    #
+    # The covariate builders above are a hardcoded set of functions, so adding a name to
+    # covariates.baseline_L0 or covariates.time_varying_Lt would otherwise be a silent
+    # no-op here AND a silent drop in 03, which selects columns by those same config
+    # names. A config that is read but not honoured is worse than no config, because the
+    # next person reads it as a policy statement. This converts that into a loud failure.
+    #
+    # This check is what caught pf_source: declared in the config since the covariates
+    # block was written, never built, and therefore absent from the frame.
+    # ---------------------------------------------------------------------
+    expected, missing = [], []
+    # The full baseline set is baseline_L0 plus the entered Charlson components. The
+    # component names live in exactly one place (definitions.cci_components.entered);
+    # they were duplicated into baseline_L0 until 2026-08-19 and the copies had drifted.
+    for name in list(COV["baseline_L0"]) + list(CCI_ENTERED):
+        expected.append((name, [name, f"{name}_0"]))
+    for name in COV["time_varying_Lt"]:
+        expected.append((name, [f"{name}_{k}" for k in sorted(COV_WINDOWS) if k > 1]))
+    for name in ("pf_source", "ph_source"):          # indicators named in definitions
+        expected.append((name, [f"{name}_0"]))
+    for name, candidates in expected:
+        if not any(c in wide.columns for c in candidates):
+            missing.append(f"{name} (looked for {', '.join(candidates)})")
+    assert not missing, (
+        "config declares covariates that no column satisfies, so they would be silently "
+        "dropped downstream:\n  " + "\n  ".join(missing))
+    print(f"  config coverage: all {len(expected)} declared covariates resolve to columns")
     return wide, miss_df
 
 

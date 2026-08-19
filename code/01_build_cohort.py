@@ -79,9 +79,12 @@ vit = Vitals.from_file(
 
 pat = Patient.from_file(**_kw).df
 
-# Defining the outcome of mortality
-DEATH_DISPOSITIONS = {"expired", "hospice"}
+# Defining the outcome of mortality. READ from the design file, not written here. This is
+# the definition of the study's outcome; a second copy living in a script is a copy that can
+# drift from the protocol without anyone noticing, and the protocol is what ships to sites.
+DEATH_DISPOSITIONS = {d.lower() for d in design["outcome"]["death_dispositions"]}
 OUTCOME_HORIZON_D = design["time"]["outcome_horizon_days"]
+print(f"death dispositions (from lmtp_design.json): {sorted(DEATH_DISPOSITIONS)}")
 
 
 # Flow bounds are applied ONCE, here, before anything reads a flow. 

@@ -131,12 +131,6 @@
       "age_at_admission",
       "sex",
       "weight_kg",
-      "cci_chf",
-      "cci_ckd",
-      "cci_liver_mod_severe",
-      "cci_diabetes",
-      "cci_chronic_pulmonary",
-      "cci_metastatic_solid_tumour",
       "creatinine",
       "bun",
       "potassium",
@@ -453,7 +447,12 @@
       "_absence_means_zero_why": "For a continuously infused MEDICATION, the absence of a record does not mean the value was not measured; it means the drug was not running. Carrying the previous node's vasopressor dose forward into a node with no infusion recorded would invent pressor exposure for a patient who had been weaned off it, and would do so most often in exactly the recovering patients whose liberation already drives the S1/S2 difference. These variables are therefore set to 0 for every at-risk node with no record, and are NOT eligible for LOCF. Labs are the opposite case: an unmeasured potassium is unknown, not zero, so labs do use LOCF. ADDED 2026-08-18 during implementation of 02, after the first run reported nee 17% and inotrope 84% 'missing' at node 1, which was absence being mislabelled as ignorance.",
       "baseline": "Left NA by 02. Imputation (MICE) belongs with the fit in 03, not with dataset construction.",
       "reporting": "Missingness is reported PER VARIABLE PER NODE BEFORE LOCF, so the extent of filling is visible rather than silent.",
-      "_source": "LOCF for later time points is Diaz's convention; see fluid_ARDS/plans/analysis_plan.md S4.4."
+      "_source": "LOCF for later time points is Diaz's convention; see fluid_ARDS/plans/analysis_plan.md S4.4.",
+      "baseline_imputation": "median_mode_plus_indicator",
+      "_baseline_imputation_why": "PILOT CHOICE, 2026-08-19, superseding the inherited 'MICE' in fluid_ARDS/plans/analysis_plan.md S4.4 for the pilot only. Continuous covariates are imputed at the median and binaries at the mode, with an EXPLICIT missingness indicator alongside. The indicator is not bookkeeping: arterial sampling tracks severity, so 'was a blood gas drawn' carries signal, and SuperLearner can use it. HONEST COST, to be stated in any Methods text: imputation is treated as fixed preprocessing, so its uncertainty does not propagate into the influence-function variance and standard errors are mildly optimistic. The definitive analysis must pre-specify whether it stays with this or moves to MICE with Rubin pooling, which multiplies every fit by m. 37.2% of rows carry at least one missing covariate, concentrated in P/F (22.3%), S/F (24.8%), lactate (11.9%) and IMV status (9.3%).",
+      "indicator_min_count": 20,
+      "indicator_min_pct": 1.0,
+      "_indicator_threshold_why": "A missingness indicator is added only where missingness reaches at least max(indicator_min_count, indicator_min_pct% of n). Below that the indicator is near-constant and becomes EXACTLY constant inside a cross-fitting training fold, at which point SuperLearner drops the variable and its predict step then asks for a column that no longer exists: 'undefined columns selected'. Measured at the coordinating site 2026-08-19: 8 of 23 candidate indicators had fewer than 20 ones and four had exactly ONE, which is what surfaced this. Columns below the threshold are still imputed; they simply carry no indicator, which costs nothing since one or two imputed cells cannot carry information anyway."
     },
     "_volume_assessment_LIMITATION": "THIS ANALYSIS HAS NO VOLUME ASSESSMENT OF ANY KIND, patient-side or machine-side. Urine output and fluid balance are unavailable: there is no intake_output table in CLIF at the coordinating site and no urine-output category in vitals or patient assessments, and this is not expected to change soon. crrt_therapy.ultrafiltration_out, the machine-side alternative, is excluded as unstable in this CLIF version (PI, 2026-08-18). SUPERSEDES the earlier text that made urine output and fluid balance a REQUIREMENT for L_t: that requirement was inherited from fluid_ARDS, where urine output is a COMPONENT OF THE EXPOSURE (net fluid balance) and must be lagged for that reason. Here the exposure is CRRT effluent dose, so the rationale does not transfer, and as written the requirement could not be met by any CLIF site. CONSEQUENCE, and it must be stated in any Methods text: the S1/S2 bracket differs precisely because of CRRT liberation, liberation tracks renal recovery, and recovery is now adjusted for only indirectly through BUN, creatinine at baseline, and the severity covariates. The residual confounding direction is known in advance rather than hypothetical.",
     "_sofa_fallback_parameterisation": {
@@ -466,7 +465,8 @@
       "_build_consequence": "02 emits non-renal SOFA and its components REGARDLESS, since they are free from the same compute_sofa_polars call. 03 can then switch parameterisation without rebuilding the dataset.",
       "_fill_na_scores_with_zero": "MUST be False. The clifpy default of True scores a missing component as 0, i.e. normal, which at sparse nodes biases severity downward exactly where data are thinnest.",
       "_nonrenal_sum_requires_all_components": "sofa_nonrenal is the sum of the five non-renal components and is NULL unless ALL five are present. Summing what happens to be available would reintroduce, through the back door, precisely the bias that fill_na_scores_with_zero=False was set to avoid: a missing component would contribute 0 and read as normal."
-    }
+    },
+    "_baseline_L0_note": "This list holds the NON-comorbidity baseline terms only. The entered Charlson components live in exactly one place, definitions.cci_components.entered, and the scripts compose the full baseline set as baseline_L0 + that list. They were duplicated here until 2026-08-19, and the two copies had already drifted: this list still carried the pre-2026-08-18 labels (cci_chf, cci_ckd, ...) while `entered` had been corrected to clifpy's actual column names. Caught by the config-coverage assertion in 02_build_lmtp_df.py stage 7 on its first run, which is the whole point of that assertion existing."
   },
   "estimation": {
     "primary": "lmtp_sdr",
@@ -481,7 +481,45 @@
     "package_version_target": "1.5.4",
     "_positivity_check_node2": "Fit the node-2 treatment mechanism BOTH WITH AND WITHOUT bicarbonate, and compare the density-ratio distributions. Bicarbonate, potassium and BUN are all cleared or manipulated by CRRT, so at nodes 2 and 3 they are partly a readout of A_1. That is legitimate for L_t, since a time-varying confounder affected by prior treatment is exactly what LMTP handles, but it sharpens the conditional density ratio and feeds the recorded residual risk that A2 | A1 is near-deterministic (r = 0.75). This is a diagnostic, not a covariate-selection rule: do not drop bicarbonate on the basis of the effect estimate.",
     "_diagnostics_why": "CHANGED 2026-08-18. This key previously named lmtp_gcomp and lmtp_ipw. Both are DEFUNCT in lmtp: they live in R/defunct.R and call lifecycle::deprecate_stop(), so they raise an error rather than a warning, and they were removed in 1.5.0. No reachable version of the package offers them, because 1.5.0 is also the version that added the competing-risks support this design depends on. The package's own message: 'IPW requires the use of correctly pre-specified parametric models for valid statistical inference. Use lmtp_tmle() or lmtp_sdr() instead.' The replacement diagnostics are what the package actually supports and what the recorded positivity risk needs: agreement between the SDR primary and the TMLE secondary, and the density-ratio distribution plus trimmed fraction read off the fitted object's density_ratios matrix (n x tau).",
-    "package_version_verified": "1.5.4 on R 4.3.1, 2026-08-18. See code/R_PACKAGES.md."
+    "package_version_verified": "1.5.4 on R 4.3.1, 2026-08-18. See code/R_PACKAGES.md.",
+    "k": "Inf",
+    "_k_why": "DEVIATION from fluid_ARDS/plans/analysis_plan.md S4.5, which pins k = 2 on the grounds that physicians do not base decisions on more than 48h of history. That setting was written for a design where EVERY period carries covariates. Ours does not: covariates.post_window_covariates carries them forward by passing time_vary = list(L1, L2, L3, NULL, NULL, NULL). k truncates the history at l = t - k - 1 (lmtp R/Vars.R, parents_L / parents_A), with baseline W always retained, so under k = 2 the deepest outcome regression reaches only L[[4]], L[[5]] and L[[6]], all of which are NULL. It would condition on baseline and treatments alone, with no time-varying confounding at all. k = Inf is also far cheaper here than the S6.2 warning implies: that warning assumed tau = 14 with ~10 covariates per period (140+ predictors), whereas we have three real covariate periods, roughly 65 predictors at n = 2,144. IF k IS EVER TRUNCATED, the carry-forward must first be reimplemented as explicit duplicated columns.",
+    "mtp": true,
+    "folds": 10,
+    "_folds_why": "Package default. FIXED ACROSS SITES so site estimates are like-for-like.",
+    "id": "patient_id",
+    "_id_why": "S4.5 says cluster on patient only; under federation site is constant within a fit and clustering is handled at the combination layer. NOT encounter_block: measured 2026-08-19, 27 patients contribute more than one block at the coordinating site (max 4), so clustering on the block would understate dependence. Cross-fitting must also keep the two duplicated density-ratio records for a subject in the same fold, which is what id is for.",
+    "discrete_superlearner": false,
+    "_discrete_why": "lmtp_control(.discrete) defaults to TRUE, which is the DISCRETE Super Learner: a single best learner, chosen per site. Set FALSE for the weighted ensemble. Under federation the ensemble is the MORE comparable choice, not the less: with .discrete = TRUE each site silently runs a different estimator, whereas the ensemble has a weight vector, and that vector is the transparency artifact each site exports.",
+    "trim": 0.999,
+    "trim_sensitivity": [
+      0.99,
+      1
+    ],
+    "_trim_why": "Report trim MAGNITUDE, not rate. At .trim = 0.999 the rate is 0.1% by construction and therefore uninformative; what matters is the VALUE at the 99.9th percentile (a cumulative weight of 3 is fine, 400 is not, at the same rate) and whether the estimate moves when rerun at 0.99 and 1.",
+    "bound": 100000.0,
+    "_bound_note": "lmtp_control(.bound) default is 1e5. fluid_ARDS/plans/lmtp_discussion.md S6.2 records it as 1e-5; that is an error in the inherited note, verified against lmtp 1.5.4 source.",
+    "seed": 20260819,
+    "_seed_why": "FIXED AND SHARED ACROSS SITES. SuperLearner is deterministic given data, library, fold assignment and seed, but fold assignment is random, so without a shared seed a site's own rerun does not reproduce and cross-site differences are partly noise.",
+    "learners_outcome": [
+      "SL.mean",
+      "SL.glm",
+      "SL.glmnet",
+      "SL.earth",
+      "SL.ranger",
+      "SL.xgboost"
+    ],
+    "learners_trt": [
+      "SL.mean",
+      "SL.glm",
+      "SL.glmnet",
+      "SL.earth",
+      "SL.ranger",
+      "SL.xgboost"
+    ],
+    "_learners_why": "S4.5. learners_trt must be BINARY CLASSIFIERS: the treatment mechanism is estimated as a density ratio through a classification trick on an augmented dataset of size 2n. Explicitly do NOT repeat Antonucci's library of {logistic, Bayesian logistic}, two GLMs with the same link. EXPORT the SL coefficient vector per nuisance per fold: the silent failure mode is a learner erroring at a site, being dropped, and SuperLearner renormalising without warning, which shows up as an absent or zero coefficient.",
+    "_diagnostics_spec": "Per fluid_ARDS/plans/analysis_plan.md S4.6, computed PER SITE, never pooled: a pooled diagnostic can look comfortable while one site is degenerate. (1) density-ratio distributions per period AND cumulative, target roughly 0.1-10 cumulative as a rule of thumb, not a literature threshold; (2) THE CONDITIONAL POSITIVITY CHECK, density ratio at node 2 stratified by A1 rather than marginally, which is the recorded residual risk and the reason the pilot exists; (3) trim magnitude and sensitivity; (4) Kish effective sample size per period on cumulative weights, S4.6 scale ~60% of n comfortable, ~30% the limit, ~10% tau=3 territory; (5) weight concentration, share of total weight in the top 1%, above ~20% means a handful of patients carry the estimate; (6) shifted fraction as a headline; (7) SDR vs TMLE agreement; (8) bicarbonate with and without at node 2.",
+    "_pilot_gate": "DIAGNOSTICS BEFORE ESTIMATES, and the ordering is deliberate. 03 runs in gated stages: smoke test, then natural course plus delta=5 under S1 with diagnostics reported and NO effect estimate, then the full ladder only if the gate clears. Once an effect estimate has been seen, every later decision about trimming or covariates is contaminated, and _positivity_check_node2 already states that the bicarbonate comparison is a diagnostic and not a covariate-selection rule."
   },
   "site_admission": {
     "rule": "band_occupancy_under_the_shift",

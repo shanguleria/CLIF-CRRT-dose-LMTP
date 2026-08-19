@@ -26,12 +26,26 @@ tables to written artifacts:
 -> 2,144 with a dose series -> 2,144 with an outcome
 ```
 
-It writes `cohort.parquet` and `dose_series.parquet` to `output/intermediate_phi/`,
-and a provenance-stamped STROBE table to `output/final_no_phi/`.
+It writes `cohort.parquet`, `dose_series.parquet` and `block_map.parquet` to
+`output/intermediate_phi/`, and a provenance-stamped STROBE table to
+`output/final_no_phi/`.
 
-`02_build_lmtp_df.py` and `03_lmtp_fit.R` do not exist, and no R packages are
-installed. The decision that used to block 02 was made on 2026-08-18, so **02 is
-now writable**.
+`code/02_build_lmtp_df.py` is **also complete and runs**, producing
+`output/intermediate_phi/lmtp_df.parquet` (2,144 x 162, one row per encounter block:
+S1 and S2 exposure at three nodes, baseline and time-varying covariates, and
+outcome / competing / censoring indicators on the day 3/7/14/30 grid) plus
+`output/final_no_phi/<SITE>_lmtp_df_diagnostics.csv`. Its build walkthrough is
+`docs/lmtp_df_build_notes.md`.
+
+`03_lmtp_fit.R` does not exist and no R packages are installed. Whether `lmtp`
+v1.5.4 even builds on system R 4.3.1 is still unverified, and it should be settled
+before 03 is designed around it.
+
+**Covariate definitions live in `config/lmtp_design.json` under `covariates`, and
+nowhere else.** A measurement rule is protocol by the test below: if one site pairs a
+PaO2 with an FiO2 up to 1h old and another up to 24h, P/F is not the same variable.
+02 reads every rule from there and decides nothing. `docs/` and any Methods text cite
+those keys rather than restating values.
 
 ## The estimand decision that used to block dataset code
 
@@ -93,6 +107,8 @@ Machine-readable in `config/lmtp_design.json`; that file is the
 | Shift form | **self-limiting, never clamped** | `lmtp` supplies no guard and will not warn you. Clamping breaks invertibility |
 | tau | **3 nodes at 0/24/48h** | Retention >= 38% at 48h everywhere; 72h thin at one site. Do not exceed tau=4 |
 | Node statistic | **time-weighted mean** | Delivered dose. Charted zeros in, uncharted gaps not imputed. Matches Quickfall/Koyner 2026 at the same institution. Supersedes windowed median, whose charting-lag rationale does not survive a 24h node |
+| Empty node | **exposure 0, unshifted** | A node with no charted CRRT record in a still-at-risk block is liberation. Resolves the collision between S1's charted-hours denominator and the discontinuation decision |
+| L_t covariate set | P/F (S/F fallback), NEE, inotrope, lactate, K, pH, HCO3, BUN, IMV | Set by the PI 2026-08-18. Urine output and fluid balance were **dropped**, not proxied: no `intake_output` table exists and `ultrafiltration_out` is unstable in this CLIF version, so the analysis has **no volume assessment** and says so |
 | Estimator | `lmtp_sdr` primary, `lmtp_tmle` secondary | Diaz's own applied choice; g-comp and IPW as diagnostics |
 | Competing event | **discharge alive**, via `compete` | Mortality is in-hospital by construction |
 | Site admission | **band occupancy under the shift** | Outcome-blind and pre-fit; replaces the `<100 high-dose-arm` rule |

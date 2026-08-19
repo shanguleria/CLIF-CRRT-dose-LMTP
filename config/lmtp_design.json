@@ -1,5 +1,5 @@
 {
-  "definition_version": "0.1.0-draft",
+  "definition_version": "0.2.0",
   "status": "DRAFT. Estimable: discontinuation_handling resolved 2026-08-18. Remaining open items are data-quality tolerances, not design blockers.",
   "_source": "Recommendations of .claude/lmtp_feasibility_findings.md S4, feasibility audit 2026-08-15.",
   "_why_this_file": [
@@ -28,11 +28,13 @@
       "S2": "Denominator = first-to-last charted hour inside the node. Gaps INSIDE the observed CRRT span count as downtime at dose 0. Reads as delivered dose OVER THE OBSERVED SPAN. Available now: unlike S3 it never touches block_discharge_dttm.",
       "S3": "Denominator = full node follow-up. All uncharted time counts as downtime. Lower bound on delivered dose. BLOCKED on todo 2e: 51 blocks (2.4%) chart more CRRT hours than block_discharge_dttm permits, which produced doses up to 904 mL/kg/hr. Add once 2e is repaired.",
       "why_S1_and_not_S2_is_primary": "Measured 2026-08-18, coordinating site, node 0-24h. Uncharted gaps are NOT random charting lapses: in-hospital mortality falls monotonically with gap length, 73.4% at 0h gap (n=987), 66.0% at 1-2h (n=592), 63.4% at 3-6h (n=361), 52.5% at >6h (n=204); Spearman(gap hours, mortality) = -0.131, p = 1.1e-9. Absence of charting therefore mostly IS downtime, and downtime mostly means the patient is recovering. That vindicates the substantive reading of S2 but disqualifies it as primary, because it pushes recovering patients to a low exposure value by construction and so loads the exposure with recovery status: S2 median falls to 17.9 in the >6h gap group against 29.3 under S1, and Spearman(dose, mortality) rises from +0.219 under S1 to +0.237 under S2. This is confounding by indication amplified by a measurement choice.",
-      "consequence_for_step_02_COVARIATES": "REQUIREMENT, not a suggestion. Because the S1/S2 difference is driven by liberation and liberation tracks recovery, the time-varying covariate set L_t at each node MUST carry the predictors of CRRT liberation: urine output, vasopressor status and dose, fluid balance, and SOFA at the node. Without them S2 is confounded in a direction that is now known in advance. LMTP handles time-varying confounding only to the extent that L_t measures it.",
+      "consequence_for_step_02_COVARIATES": "SUPERSEDED 2026-08-18, see covariates._volume_assessment_LIMITATION. This key previously required urine output, vasopressors, fluid balance and SOFA in L_t. The urine-output and fluid-balance half of that requirement was inherited from fluid_ARDS, where urine output is a component of the exposure itself, and could not be met by any CLIF site. THE SUBSTANTIVE POINT STANDS AND IS UNCHANGED: the S1/S2 difference is driven by CRRT liberation, liberation tracks renal recovery, and LMTP adjusts for time-varying confounding only to the extent that L_t measures it. What changed is the instrument. The agreed L_t set is in covariates.time_varying_Lt; recovery is now captured only indirectly, through BUN, baseline creatinine and the severity covariates, so the residual confounding on S2 is known in direction and must be reported as such rather than treated as adjusted away.",
       "agreement": "46.0% of blocks (987 of 2,144) have no uncharted gap in node 0-24h, so S1 and S2 are numerically identical for nearly half the cohort. Gap hours: p50 1, p75 3, p90 6, p95 9, max 20.",
       "reporting": "Report the primary estimate under S1 and the full delta ladder under S2 alongside it. Per site and per node, report the share of node hours charted and the share of charted records at exactly zero, so a site whose downtime charting differs is visible in pooling rather than silent.",
       "open_alternative_to_bracketing": "The bracket could be replaced by an actual discriminator. If a co-charted hourly stream such as vitals is present during a CRRT gap, the patient was being observed and the absence of a CRRT record is more likely genuine downtime than a charting lapse; if nothing at all is charted, the lapse reading is more likely. Not built. Would turn S1/S2 into a single imputed statistic. See todo 1c."
-    }
+    },
+    "empty_node_rule": "zero_unshifted",
+    "_empty_node_rule_why": "A node with NO charted CRRT record at all, in a patient still alive and in hospital, takes exposure 0 and the policy leaves it unshifted. This resolves a collision between two rules that were settled separately: the S1 denominator is 'charted hours only', so an empty node has no defined mean, while discontinuation_handling says liberation is an exposure value of zero. The empty node is the liberation case. Safe for the same reason as the parent decision: 0 - delta < floor for every delta in the ladder, so the policy can never move a patient onto or off therapy. Known cost: a genuinely uncharted node on a still-running machine is misread as liberation. Bounded by the measured finding that absence of charting tracks recovery rather than clerical failure. Decided 2026-08-18."
   },
   "policy": {
     "shift_form": "self_limiting_never_clamped",
@@ -82,6 +84,378 @@
     "_hospice_counts_as_death": "39 blocks at the coordinating site, 2.7% of deaths. A hospice discharge is a transfer OUT of the hospital, not a death in it, so this is a definitional choice that MUST be stated explicitly.",
     "_residual_impossibility": "10 blocks carry a death timed before their CRRT initiation. Same blocks as the Stage 4 late-initiation warning: the contradiction is between the CRRT timestamp and the discharge timestamp in the source, and no choice of event time fixes it. See todo 2e."
   },
+  "covariates": {
+    "_why_this_block": [
+      "A covariate measurement rule is PROTOCOL, not a site preference. The test is the",
+      "one in CLAUDE.md: if two sites set this differently, is the pooled result still",
+      "meaningful? If one site pairs a PaO2 with an FiO2 up to 1h old and another up to",
+      "24h, P/F is not the same variable and the pooled estimate is not meaningful.",
+      "",
+      "Scripts READ these definitions. They do not decide them. A hardcoded lookback in",
+      "a script is invisible to everyone who did not write it and was agreed by nobody.",
+      "",
+      "Settled 2026-08-18 with the PI, covariate by covariate. Supersedes the inherited",
+      "fluid_ARDS L_t list, which required urine output and fluid balance."
+    ],
+    "_source_of_truth": "This block is the ONLY place covariate definitions live. The build walkthrough and the site-facing methods document CITE THESE KEYS; they do not restate the values. Two independent statements of one definition drift, and then nobody knows which is the protocol. See .claude/lessons.md, 'The same fact expressed twice is the bug'.",
+    "windows": {
+      "anchor": "crrt_initiation_dttm",
+      "interval_convention": "half-open, [start, end)",
+      "baseline_L0": {
+        "start_h": -24,
+        "end_h": 0
+      },
+      "node_2": {
+        "start_h": 0,
+        "end_h": 24
+      },
+      "node_3": {
+        "start_h": 24,
+        "end_h": 48
+      },
+      "_ordering_rule": "Every covariate window must END at or BEFORE the start of the exposure node it feeds, so that L_t precedes A_t. L_0 over [-24,0) feeds A_1 over [0,24); node_2 covariates over [0,24) feed A_2 over [24,48); node_3 covariates over [24,48) feed A_3 over [48,72). 02_build_lmtp_df.py ASSERTS window_end <= node_start for every covariate rather than commenting it. The sibling 04_build_causal_df.py violates exactly this rule by pairing a 0-24h mean dose with covariates measured at 24h, and a comment cannot fail."
+    },
+    "baseline_L0": [
+      "age_at_admission",
+      "sex",
+      "weight_kg",
+      "cci_chf",
+      "cci_ckd",
+      "cci_liver_mod_severe",
+      "cci_diabetes",
+      "cci_chronic_pulmonary",
+      "cci_metastatic_solid_tumour",
+      "creatinine",
+      "bun",
+      "potassium",
+      "lactate",
+      "ph",
+      "bicarbonate",
+      "pf_ratio",
+      "sf_ratio",
+      "nee",
+      "inotrope",
+      "imv_status"
+    ],
+    "time_varying_Lt": [
+      "pf_ratio",
+      "sf_ratio",
+      "nee",
+      "inotrope",
+      "lactate",
+      "potassium",
+      "ph",
+      "bicarbonate",
+      "bun",
+      "imv_status"
+    ],
+    "_excluded_by_decision": {
+      "cci_score": "Components are entered, the composite is not. Entering both double-counts.",
+      "sofa": "See _sofa_fallback_parameterisation. Out of the primary set, still computed.",
+      "peep_set": "Dropped 2026-08-18. Present in an early draft of the L_t list, removed in the final one.",
+      "calendar_year": "Excluded by decision, despite calendar time being the stated reason the study window is protocol.",
+      "admission_type": "Excluded by decision.",
+      "race_ethnicity_bmi": "Excluded from the nuisance models by decision. Reporting them in a Table 1 is a separate question.",
+      "urine_output": "See _volume_assessment_LIMITATION.",
+      "fluid_balance": "See _volume_assessment_LIMITATION.",
+      "ultrafiltration_out": "See _volume_assessment_LIMITATION.",
+      "site": "Constant within a federated fit, therefore degenerate as a within-site covariate. Enters at the combination layer as the meta-analysis unit."
+    },
+    "definitions": {
+      "pf_ratio": {
+        "label": "PaO2/FiO2 ratio",
+        "sources": [
+          {
+            "table": "clif_labs",
+            "category": "po2_arterial",
+            "value": "lab_value_numeric",
+            "time": "lab_result_dttm"
+          },
+          {
+            "table": "clif_respiratory_support",
+            "column": "fio2_set",
+            "time": "recorded_dttm"
+          }
+        ],
+        "algorithm": "For EVERY po2_arterial result inside the window, pair it with the most recent non-null fio2_set at or before that result's lab_result_dttm, searching back at most fio2_lookback_hours. Compute pf = po2_arterial / fio2_set. Then take the MINIMUM pf across the window. A window with no po2_arterial, or none that can be paired within the lookback, yields no P/F and falls back to sf_ratio.",
+        "summary": "min",
+        "fio2_lookback_hours": 4,
+        "_fio2_lookback_why": "An FiO2 charted more than 4h before a blood gas is unlikely to describe the conditions that gas was drawn under. Report the share of PaO2 results the cap excludes; if it discards most pairings the cap is wrong and should be revisited before the pilot, not after.",
+        "_fio2_scale": "fio2_set is on the 0-1 fraction scale at the coordinating site: 3,204,590 of 3,205,294 non-null values are <= 1.0. The 704 values above 1.0 are DROPPED by the clifpy bound [0.21, 1.0], not rescaled to a percentage. The observed maximum of 88,880 gives no basis for guessing intent, and rescaling on a guess would manufacture plausible-looking P/F values out of data entry errors."
+      },
+      "sf_ratio": {
+        "label": "SpO2/FiO2 ratio",
+        "role": "Fallback for pf_ratio. A SEPARATE COLUMN, never blended into pf_ratio.",
+        "sources": [
+          {
+            "table": "clif_vitals",
+            "category": "spo2",
+            "value": "vital_value",
+            "time": "recorded_dttm"
+          },
+          {
+            "table": "clif_respiratory_support",
+            "column": "fio2_set",
+            "time": "recorded_dttm"
+          }
+        ],
+        "algorithm": "Same pairing rule and lookback as pf_ratio, against spo2 instead of po2_arterial, RESTRICTED to spo2 <= 97. Take the minimum across the window.",
+        "summary": "min",
+        "spo2_ceiling": 97,
+        "_spo2_ceiling_why": "Above an SpO2 of 97 the oxyhaemoglobin dissociation curve is flat, so SpO2 carries almost no information about PaO2 and S/F becomes an artefact of how high the FiO2 happens to be.",
+        "_why_separate_column": "P/F and S/F are different scales. Blending them into one oxygenation column would make the variable's MEANING depend on whether an arterial gas happened to be drawn, and arterial sampling is itself informative because sicker patients get more gases. Carried as two columns plus the pf_source indicator, so the learner sees both the value and its provenance."
+      },
+      "pf_source": {
+        "label": "Which oxygenation measure is populated at this node",
+        "values": [
+          "pf",
+          "sf",
+          "none"
+        ],
+        "role": "Indicator accompanying pf_ratio and sf_ratio."
+      },
+      "nee": {
+        "label": "Norepinephrine-equivalent vasopressor dose",
+        "units": "mcg/kg/min",
+        "sources": [
+          {
+            "table": "clif_medication_admin_continuous",
+            "categories": [
+              "norepinephrine",
+              "epinephrine",
+              "phenylephrine",
+              "dopamine",
+              "vasopressin",
+              "angiotensin"
+            ]
+          }
+        ],
+        "coefficients": {
+          "norepinephrine": 1.0,
+          "epinephrine": 1.0,
+          "phenylephrine": 0.1,
+          "dopamine": 0.01,
+          "vasopressin": 2.5,
+          "angiotensin": 10.0
+        },
+        "_coefficients_note": "vasopressin's coefficient applies to units/min, not mcg/kg/min. All others apply to mcg/kg/min. NEE conversion factors differ across published sources, which is exactly why they are pinned here rather than left to a script.",
+        "algorithm": "Standardise doses with clifpy convert_dose_units_by_med_category, using find_most_recent_weight for weight-based units. Build a STEP FUNCTION per drug: an infusion rate is held from each record until the next rate change or stop. Sum the concurrent contributions of all six drugs at every change point inside the window. Take the MAXIMUM of that summed series over the window.",
+        "summary": "max of the summed step function",
+        "hold_hours": 4,
+        "_hold_hours_why": "An infusion rate is held forward from each record for at most 4 hours. Needed because concurrent drugs are not charted at the same instants, so without a hold the sum would understate combined pressor load whenever two drugs were charted minutes apart. Bounded at 4h because the measured median interval between consecutive records of a single vasopressor at the coordinating site is 57 minutes (p90 68 minutes): a silence of four hours is far outside normal charting and most likely means the infusion ended without a stop being charted. mar_action_category == 'stop' sets the rate to 0 explicitly, so the hold only has to cover charting gaps, not real stops. ADDED 2026-08-18 during implementation of 02; it is a protocol parameter because two sites holding rates for different durations would compute different NEE.",
+        "_stop_signal": "mar_action_category == 'stop' sets the rate to zero rather than leaving it missing. Verified present at the coordinating site: 94,759 stop rows across the eight vasoactive categories.",
+        "_why_step_function": "A naive maximum over individual rows takes the largest single-drug dose and so UNDERSTATES combined pressor load: a patient on moderate doses of three agents is sicker than one on a slightly higher dose of one, and the row-wise maximum cannot see the difference."
+      },
+      "inotrope": {
+        "label": "Inotrope running at any point in the window",
+        "type": "binary",
+        "sources": [
+          {
+            "table": "clif_medication_admin_continuous",
+            "categories": [
+              "dobutamine",
+              "milrinone"
+            ]
+          }
+        ],
+        "algorithm": "1 if either drug has a non-zero rate at any point inside the window, else 0.",
+        "summary": "any in window",
+        "_why_not_in_nee": "Dobutamine and milrinone are inotropes, not vasopressors; folding them into a norepinephrine-equivalent sum would misrepresent both. Carried alongside NEE so the cardiogenic phenotype, which has a different tolerance for fluid removal, is not invisible to the model."
+      },
+      "lactate": {
+        "label": "Lactate",
+        "sources": [
+          {
+            "table": "clif_labs",
+            "category": "lactate",
+            "value": "lab_value_numeric",
+            "time": "lab_result_dttm"
+          }
+        ],
+        "algorithm": "Take the MAX of all lactate results inside the window.",
+        "summary": "max"
+      },
+      "potassium": {
+        "label": "Potassium",
+        "sources": [
+          {
+            "table": "clif_labs",
+            "category": "potassium",
+            "value": "lab_value_numeric",
+            "time": "lab_result_dttm"
+          }
+        ],
+        "algorithm": "Take the MAX of all potassium results inside the window.",
+        "summary": "max",
+        "_why": "Maximum only, a single term. Hyperkalaemia is an indication for dialysis; a min-and-max pair was considered and dropped to keep the term count down, which is the same concern that drives the node-2 positivity risk."
+      },
+      "bicarbonate": {
+        "label": "Serum bicarbonate",
+        "sources": [
+          {
+            "table": "clif_labs",
+            "category": "bicarbonate",
+            "value": "lab_value_numeric",
+            "time": "lab_result_dttm"
+          }
+        ],
+        "algorithm": "Take the MIN of all bicarbonate results inside the window.",
+        "summary": "min",
+        "_why": "Minimum, since lower is worse. The lab_category 'sodium_bicarbonate' (57,435 rows at the coordinating site) is a different quantity and is NOT included."
+      },
+      "bun": {
+        "label": "Blood urea nitrogen",
+        "sources": [
+          {
+            "table": "clif_labs",
+            "category": "bun",
+            "value": "lab_value_numeric",
+            "time": "lab_result_dttm"
+          }
+        ],
+        "algorithm": "Take the MAX of all bun results inside the window.",
+        "summary": "max"
+      },
+      "ph": {
+        "label": "Blood pH",
+        "sources": [
+          {
+            "table": "clif_labs",
+            "category": "ph_arterial",
+            "preference": 1
+          },
+          {
+            "table": "clif_labs",
+            "category": "ph_venous",
+            "preference": 2
+          }
+        ],
+        "algorithm": "Prefer ph_arterial. Use ph_venous ONLY if no ph_arterial result falls inside the window; record which was used in ph_source. Take the MINIMUM across the window of whichever source is used.",
+        "summary": "min",
+        "_why_min": "Acidosis is the indication for dialysis; alkalosis on CRRT is a consequence of buffer delivery and drives far less clinical action.",
+        "_why_indicator_not_correction": "Venous pH runs roughly 0.03-0.05 below arterial. Silently pooling the two would manufacture an acidosis gradient that tracks SAMPLING PRACTICE rather than physiology. Applying a fixed correction would be worse, since the offset varies with perfusion, which is precisely what is abnormal in this cohort."
+      },
+      "ph_source": {
+        "label": "Which pH source populated this node",
+        "values": [
+          "arterial",
+          "venous",
+          "none"
+        ],
+        "role": "Indicator accompanying ph."
+      },
+      "creatinine": {
+        "label": "Serum creatinine at CRRT initiation",
+        "enters": "baseline_L0 only",
+        "sources": [
+          {
+            "table": "clif_labs",
+            "category": "creatinine",
+            "value": "lab_value_numeric",
+            "time": "lab_result_dttm"
+          }
+        ],
+        "algorithm": "Take the LAST creatinine result strictly before t0, within creatinine_lookback_hours.",
+        "summary": "last value before t0",
+        "creatinine_lookback_hours": 24,
+        "_why_last_not_extremum": "What matters is renal state AT INITIATION, before CRRT begins clearing creatinine. A minimum or maximum over the preceding day would describe the trajectory rather than the starting point.",
+        "_why_baseline_only": "After t0, creatinine is largely a readout of delivered clearance, so as a time-varying covariate it is closer to a mediator than a confounder. BUN is retained time-varying because catabolism contributes to it independently of dose."
+      },
+      "imv_status": {
+        "label": "Invasive mechanical ventilation in effect",
+        "type": "binary",
+        "sources": [
+          {
+            "table": "clif_respiratory_support",
+            "column": "device_category"
+          }
+        ],
+        "algorithm": "Run clifpy process_resp_support_waterfall, then take the LAST KNOWN device_category at or before the window's END boundary. 1 if it is 'IMV', else 0.",
+        "summary": "state at window end boundary",
+        "_why_boundary_not_any": "A point-in-time state at the boundary is what precedes the next exposure node. 'Any IMV during the window' would be a different variable, closer to a severity summary than to the patient's state when the next dose decision is made."
+      },
+      "cci_components": {
+        "label": "Charlson comorbidity components, six entered as binaries",
+        "entered": [
+          "congestive_heart_failure",
+          "renal_disease",
+          "moderate_severe_liver_disease",
+          "diabetes",
+          "chronic_pulmonary_disease",
+          "metastatic_solid_tumor"
+        ],
+        "sources": [
+          {
+            "table": "clif_hospital_diagnosis"
+          }
+        ],
+        "algorithm": "clifpy calculate_cci(hierarchy=True) over the diagnoses of ALL hospitalizations in the encounter block, i.e. at BLOCK GRAIN, exactly as the ESRD exclusion does. All 17 components are computed; six are entered. cci_score is computed and retained for description but is NOT entered.",
+        "_grain_note": "Block grain, not hospitalization grain. A comorbidity coded on any hospitalization in a stitched block belongs to the patient for the whole block.",
+        "_no_absorption_target": "CONSEQUENCE OF NOT ENTERING cci_score. The inherited per-site prevalence floor rule absorbs a component that fails the floor at any site INTO cci_score, so the covariate set stays identical across sites. With cci_score not entered there is no absorption target, so a component failing anywhere must simply be dropped everywhere. Metastatic solid tumour is the most likely casualty. Fix the floor value before any outcome model is fit, not after seeing prevalences.",
+        "_entered_names_are_clifpy_names": "These are the EXACT column names clifpy calculate_cci() emits, not our own labels. Naming them anything else would force the script to fuzzy-match config labels against library output, which fails silently the moment clifpy renames a column. Verified against clifpy 0.4.9, whose 17 components are: aids, cancer, cerebrovascular_disease, chronic_pulmonary_disease, congestive_heart_failure, connective_tissue_disease, dementia, diabetes_uncomplicated, diabetes_with_complications, hemiplegia, metastatic_solid_tumor, mild_liver_disease, moderate_severe_liver_disease, myocardial_infarction, peptic_ulcer_disease, peripheral_vascular_disease, renal_disease.",
+        "diabetes_lumping": [
+          "diabetes_uncomplicated",
+          "diabetes_with_complications"
+        ],
+        "_diabetes_lumping_why": "clifpy splits diabetes into uncomplicated and with-complications, and hierarchy=True makes them mutually exclusive, so a single 'diabetes' term is the maximum of the two. Lumped because diabetes is carried as a vascular and severity marker rather than for a diabetes-specific mechanism, and splitting it would spend a covariate on a distinction this design does not use.",
+        "_liver_is_moderate_severe_only": "mild_liver_disease is NOT entered. hierarchy=True already makes mild and moderate-severe mutually exclusive, so this is a clean split, and mild disease carries little of the fluid-handling relevance that motivated including liver."
+      },
+      "age_at_admission": {
+        "label": "Age at admission",
+        "sources": [
+          {
+            "file": "output/intermediate_phi/cohort.parquet"
+          }
+        ]
+      },
+      "sex": {
+        "label": "Sex",
+        "sources": [
+          {
+            "table": "clif_patient",
+            "column": "sex_category"
+          }
+        ]
+      },
+      "weight_kg": {
+        "label": "Weight at CRRT initiation",
+        "sources": [
+          {
+            "file": "output/intermediate_phi/cohort.parquet"
+          }
+        ],
+        "_why_entered": "Also the exposure denominator. Entered so the learner can pick up weight dependence that a mL/kg/hr exposure does not encode, and because the actual-versus-ideal-weight question means part of the dose contrast may be adiposity rather than delivered therapy."
+      }
+    },
+    "outlier_bounds": {
+      "covariates": ".venv .../clifpy/schemas/outlier_config.yaml, applied via clifpy apply_outlier_handling. Pinned by clifpy==0.4.9.",
+      "exposure_flows": "config/outlier_config.json, vendored and byte-pinned at SHA ee4774b.",
+      "_why_two_sources": "The vendored config has no bounds for po2_arterial, ph_arterial, ph_venous, bicarbonate, potassium, bun or creatinine. Adding them would edit a file that tests/test_vendor_integrity.py holds byte-identical to the sibling repo, breaking the vendor contract and the dose reconciliation in one move. clifpy already ships consortium-standard bounds for every lab needed, so covariates read from there and the exposure flows keep the pinned file."
+    },
+    "missing_values": {
+      "time_varying": "If a covariate has no qualifying observation in its window it is NA at that node, then LOCF from the previous node (from baseline for node 2). Every fill is recorded in a parallel *_locf flag.",
+      "absence_means_zero": [
+        "nee",
+        "inotrope"
+      ],
+      "_absence_means_zero_why": "For a continuously infused MEDICATION, the absence of a record does not mean the value was not measured; it means the drug was not running. Carrying the previous node's vasopressor dose forward into a node with no infusion recorded would invent pressor exposure for a patient who had been weaned off it, and would do so most often in exactly the recovering patients whose liberation already drives the S1/S2 difference. These variables are therefore set to 0 for every at-risk node with no record, and are NOT eligible for LOCF. Labs are the opposite case: an unmeasured potassium is unknown, not zero, so labs do use LOCF. ADDED 2026-08-18 during implementation of 02, after the first run reported nee 17% and inotrope 84% 'missing' at node 1, which was absence being mislabelled as ignorance.",
+      "baseline": "Left NA by 02. Imputation (MICE) belongs with the fit in 03, not with dataset construction.",
+      "reporting": "Missingness is reported PER VARIABLE PER NODE BEFORE LOCF, so the extent of filling is visible rather than silent.",
+      "_source": "LOCF for later time points is Diaz's convention; see fluid_ARDS/plans/analysis_plan.md S4.4."
+    },
+    "_volume_assessment_LIMITATION": "THIS ANALYSIS HAS NO VOLUME ASSESSMENT OF ANY KIND, patient-side or machine-side. Urine output and fluid balance are unavailable: there is no intake_output table in CLIF at the coordinating site and no urine-output category in vitals or patient assessments, and this is not expected to change soon. crrt_therapy.ultrafiltration_out, the machine-side alternative, is excluded as unstable in this CLIF version (PI, 2026-08-18). SUPERSEDES the earlier text that made urine output and fluid balance a REQUIREMENT for L_t: that requirement was inherited from fluid_ARDS, where urine output is a COMPONENT OF THE EXPOSURE (net fluid balance) and must be lagged for that reason. Here the exposure is CRRT effluent dose, so the rationale does not transfer, and as written the requirement could not be met by any CLIF site. CONSEQUENCE, and it must be stated in any Methods text: the S1/S2 bracket differs precisely because of CRRT liberation, liberation tracks renal recovery, and recovery is now adjusted for only indirectly through BUN, creatinine at baseline, and the severity covariates. The residual confounding direction is known in advance rather than hypothetical.",
+    "_sofa_fallback_parameterisation": {
+      "status": "Pre-specified alternative. NOT the primary.",
+      "primary": "The granular covariate set above, with no SOFA term.",
+      "fallback": "Non-renal SOFA replacing {pf_ratio, sf_ratio, nee, imv_status, creatinine}.",
+      "trigger": "TO BE FIXED BEFORE ANY OUTCOME MODEL IS FIT. A positivity criterion at node 2 (density-ratio or trimmed-fraction threshold), never the effect estimate.",
+      "_why_sofa_is_not_primary": "Two reasons, both the PI's. Entering SOFA total alongside its own subcomponents double-counts. And SOFA's renal component is creatinine-based, so in a cohort where every patient is on CRRT it is near-constant and partly determined by the exposure itself, making it insensitive to the variation this study is about.",
+      "_why_kept_as_a_fallback": "Covariate count is what drives the node-2 positivity risk already on record (A2 | A1 near-deterministic, r = 0.75). Non-renal SOFA is a ready dimension reduction if the density ratio proves too sharp. NOT pure compression: it also introduces platelets, bilirubin and GCS, which the granular set does not carry.",
+      "_build_consequence": "02 emits non-renal SOFA and its components REGARDLESS, since they are free from the same compute_sofa_polars call. 03 can then switch parameterisation without rebuilding the dataset.",
+      "_fill_na_scores_with_zero": "MUST be False. The clifpy default of True scores a missing component as 0, i.e. normal, which at sparse nodes biases severity downward exactly where data are thinnest.",
+      "_nonrenal_sum_requires_all_components": "sofa_nonrenal is the sum of the five non-renal components and is NULL unless ALL five are present. Summing what happens to be available would reintroduce, through the back door, precisely the bias that fill_na_scores_with_zero=False was set to avoid: a missing component would contribute 0 and read as normal."
+    }
+  },
   "estimation": {
     "primary": "lmtp_sdr",
     "secondary": "lmtp_tmle",
@@ -91,7 +465,8 @@
     ],
     "_why_sdr": "Diaz's own applied choice. See fluid_ARDS/plans/lmtp_discussion.md S6.3 for the real tradeoff against TMLE.",
     "package": "lmtp",
-    "package_version_target": "1.5.4"
+    "package_version_target": "1.5.4",
+    "_positivity_check_node2": "Fit the node-2 treatment mechanism BOTH WITH AND WITHOUT bicarbonate, and compare the density-ratio distributions. Bicarbonate, potassium and BUN are all cleared or manipulated by CRRT, so at nodes 2 and 3 they are partly a readout of A_1. That is legitimate for L_t, since a time-varying confounder affected by prior treatment is exactly what LMTP handles, but it sharpens the conditional density ratio and feeds the recorded residual risk that A2 | A1 is near-deterministic (r = 0.75). This is a diagnostic, not a covariate-selection rule: do not drop bicarbonate on the basis of the effect estimate."
   },
   "site_admission": {
     "rule": "band_occupancy_under_the_shift",

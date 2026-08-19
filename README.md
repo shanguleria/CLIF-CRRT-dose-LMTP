@@ -5,13 +5,13 @@ replacement therapy (CRRT) dose across the CLIF consortium.
 
 **CLIF Version:** 2.1.0
 
-> ### Status: scaffold. The pipeline is not yet runnable.
+> ### Status: the Python half runs. The fit does not exist yet.
 >
-> This repository currently contains the environment, the design specification,
-> the vendoring contract, and the feasibility evidence. The analysis scripts
-> (`02_build_lmtp_df.py`, `03_lmtp_fit.R`) **do not exist yet**, no upstream code
-> has been vendored, and no R packages are installed. Nothing below that is
-> marked *(not built)* will run. Sites should not attempt to run this yet.
+> `01_build_cohort.py` and `02_build_lmtp_df.py` are complete and run end to end,
+> from raw CLIF 2.1.0 tables to the wide analysis frame `lmtp` consumes.
+> `03_lmtp_fit.R` **does not exist yet** and no R packages are installed, so the
+> estimation step will not run. Sites can build the analysis frame and the
+> shareable diagnostics; they cannot yet fit anything.
 
 ---
 
@@ -209,13 +209,26 @@ bash run_pipeline.sh
 
 | Step | Language | Script | Status |
 |---|---|---|---|
-| 00 | Python | `code/vendor/00_cohort.py` | *(not vendored)* Cohort identification, CRRT initiation, outcomes |
-| 01 | Python | `code/vendor/01_create_wide_df.py` | *(not vendored)* Wide time-indexed labs, vitals, meds, respiratory support |
-| 02 | Python | `code/02_build_lmtp_df.py` | *(not built)* Exposure and covariate nodes at 0/24/48h, `L_t -> A_t` ordering enforced |
+| 01 | Python | `code/01_build_cohort.py` | **Runs.** Cohort identification, ESRD exclusion, CRRT initiation, dose series, outcomes |
+| 02 | Python | `code/02_build_lmtp_df.py` | **Runs.** Exposure and covariate nodes at 0/24/48h, `L_t -> A_t` ordering asserted |
 | 03 | R | `code/03_lmtp_fit.R` | *(not built)* `lmtp_sdr` fit over the delta ladder, influence-function exports |
 
-Step 02 will be ported from `.claude/feasibility_code/tier2_within_patient.py`,
-which is a working prototype of the node assembly.
+There is no step 00. An earlier plan vendored `00_cohort.py` and four dependencies
+from `CLIF-epidemiology-of-CRRT`; that was abandoned on 2026-08-16 because the file
+is a converted notebook with no callable API and because `clifpy` 0.4.9 already
+supplies `stitch_encounters`, `compute_sofa_polars`, `create_wide_dataset` and
+`apply_outlier_handling`. `code/vendor/` now pins two **config** files only.
+
+### What the steps write
+
+| Step | Patient-level (`intermediate_phi/`) | Shareable (`final_no_phi/`) |
+|---|---|---|
+| 01 | `cohort.parquet`, `dose_series.parquet`, `block_map.parquet` | `<SITE>_strobe_counts.csv` |
+| 02 | `lmtp_df.parquet` (one row per encounter block) | `<SITE>_lmtp_df_diagnostics.csv` |
+
+Step 02 reads its every measurement rule from `config/lmtp_design.json` under
+`covariates`. It decides nothing itself: a change to a lookback window or a summary
+rule is a protocol amendment made in that file, which bumps `definition_version`.
 
 ---
 

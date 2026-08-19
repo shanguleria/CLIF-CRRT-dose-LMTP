@@ -672,7 +672,7 @@ def _code_version(repo_root):
         return "unknown"
 
 
-def stage_8_write(cohort, dose_series, strobes, config, design, repo_root):
+def stage_8_write(cohort, dose_series, mapping, strobes, config, design, repo_root):
     """Write patient-level artifacts and the shareable STROBE count table.
 
     Computes nothing. The work is splitting outputs by whether they can leave the
@@ -710,6 +710,21 @@ def stage_8_write(cohort, dose_series, strobes, config, design, repo_root):
     print(f"    wrote intermediate_phi/cohort.parquet      {len(cohort_out):,} rows")
     print(f"    wrote intermediate_phi/dose_series.parquet {len(dose_out):,} rows")
 
+    # 02 needs hospitalization_id -> encounter_block to pull covariates, since every
+    # raw CLIF table is keyed on hospitalization_id and nothing downstream of here
+    # carries one. Persisted rather than re-derived: re-running stitch_encounters in
+    # 02 would be a second, independent claim about which hospitalizations belong to
+    # which block, and two scripts that disagree about that disagree about the cohort.
+    # Restricted to the final blocks, so it inherits the same PHI scope as cohort.parquet.
+    map_out = (mapping[mapping["encounter_block"].isin(set(cohort_out["encounter_block"]))]
+               .sort_values(["encounter_block", "hospitalization_id"])
+               .reset_index(drop=True))
+    assert set(map_out["encounter_block"]) == set(cohort_out["encounter_block"]), (
+        "block map does not cover the cohort exactly")
+    map_out.to_parquet(phi / "block_map.parquet", index=False)
+    print(f"    wrote intermediate_phi/block_map.parquet   {len(map_out):,} rows "
+          f"({map_out['encounter_block'].nunique():,} blocks)")
+
     # Long format, provenance repeated on every row: pooled files get concatenated
     # and filtered, and a header-only provenance block is lost the moment they are.
     rows = [{"stage": s, "step": i, "label": lab, "n": int(n)}
@@ -735,7 +750,7 @@ def stage_8_write(cohort, dose_series, strobes, config, design, repo_root):
 
 strobes = [(1, strobe_1), (2, strobe_2), (3, strobe_3), (4, strobe_4),
            (5, strobe_5), (6, strobe_6), (7, strobe_7)]
-cohort_prov = stage_8_write(cohort, dose_series, strobes, config, design, REPO_ROOT)
+cohort_prov = stage_8_write(cohort, dose_series, mapping, strobes, config, design, REPO_ROOT)
 
 
 # %%

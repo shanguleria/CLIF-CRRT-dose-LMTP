@@ -55,64 +55,32 @@ one 6-period axis**, `[1, 2, 3, 7, 14, 30]`. The policy intervenes in periods 1-
 unintervened periods carry a density ratio of exactly 1.000 and so cost nothing in
 positivity. Full derivation with source citations in `docs/lmtp_time_grid_decision.md`.
 
-## The open question, and the user asked to be prompted
+## The intervention horizon, resolved 2026-08-19
 
-**Should the policy intervene only over the first 72h, or wherever CRRT dose is defined,
-out to day 30?** Raised 2026-08-18 by the user, deferred pending a closer read of Diaz.
-Blocks nothing already built; decides what the estimand is, so answer it before 03.
+**Three 24-hour intervention windows at 0/24/48h; primary endpoint day 30.** The policy does
+nothing in periods 4-6 of the six-period grid; the outcome curve runs on to day 30.
 
-The user observed that Diaz's competing-risks application never hits the grid mismatch that
-forced our 6-period axis, and was right. Diaz's exposure is *daily maximum respiratory
-support*, defined and intervened on at every t (Diaz, Hoffman & Hejazi, *Lifetime Data
-Analysis* 2024;30:213-236, S4.2 p.228, eq. 9 p.229, Fig. 1 p.229 over days 1-14), so his
-two grids are the same object. **Our asymmetry is a design choice, not a data limitation**:
-CRRT dose keeps existing past 72h, and tau=3 was a positivity decision. The substantive
-question is whether the policy we mean is "reduce dose for the first 72 hours" or "reduce
-dose for as long as the patient is on CRRT". Options and costs in
-`lmtp_design.json._intervention_horizon_OPEN` and todo 4b.
+The alternative weighed was seven 48h windows to day 14. Rejected on three measured grounds:
+widening the window to 48h discards ~35% of within-patient exposure variation (within-patient
+SD 3.29 -> 2.13, between-share 88% -> 91%), which is the very thing a time-varying design
+exists to exploit; the EIF weights by a cumulative *product* of density ratios (Diaz eq. 8
+p.223, `lmtp` `R/eif.R:8-10`) and Theorem 1(ii) p.225 needs a *sum over tau* of nuisance
+cross-products to vanish faster than root-n, while CRRT retention falls to **12.5% of the
+cohort by days 12-14**; and tau=7 reverses the pre-specified `Do not go past tau=4`.
 
-**Citation hygiene:** the competing-risks paper (Diaz/Hoffman/Hejazi, Lifetime Data
-Analysis 2024) is *not* Diaz/Williams/Hoffman/Schenck (JASA 2023). Both are cited in this
-project; the manuscript must distinguish them.
+**The structural point worth keeping:** how many periods we *intervene* over and how far we
+*follow* the outcome are independent. The grid already yields a day-14 estimate, so the
+endpoint was chosen separately. Day 30 because the competing event is actually operating by
+then (22.2% discharged alive against 8.3% at day 14) and the CIF is closer to settled (12.9%
+still in hospital against 34.4%).
 
-**Covariate definitions live in `config/lmtp_design.json` under `covariates`, and
-nowhere else.** A measurement rule is protocol by the test below: if one site pairs a
-PaO2 with an FiO2 up to 1h old and another up to 24h, P/F is not the same variable.
-02 reads every rule from there and decides nothing. `docs/` and any Methods text cite
-those keys rather than restating values.
+**One correction to carry forward:** extra *unintervened* periods are exactly free, with a
+density ratio of 1.000. Extra *intervened* periods are not, because once anyone in a period
+is shifted the density ratio is non-degenerate for everyone in that period.
 
-## The estimand decision that used to block dataset code
-
-**How to handle CRRT discontinuation.** The exposure is undefined once CRRT
-stops, and 39% of encounter blocks at the coordinating site have no third node.
-**RESOLVED 2026-08-18.** `discontinuation_handling: "dose_zero_unshifted"`.
-
-CRRT liberation is neither a competing event nor censoring. It is an exposure value
-of **zero, left unshifted by the policy**.
-
-- Not a competing event: liberation does not preclude in-hospital death, and
-  `compete` is correctly occupied by discharge alive.
-- Not censoring: that would estimate the effect in a world where nobody is liberated
-  within 72h, and positivity fails for recovering patients.
-- Safe because the self-limiting shift leaves zero unchanged (`0 - delta < floor` for
-  every delta in the ladder), so the policy can never move a patient onto or off
-  therapy. That is what stops this being a covert "dose or no dose" contrast.
-
-The paired decision is the **node statistic**: a time-weighted mean over charted CRRT
-records in each node, `sum(dose_h) / n_charted_hours`. Charted zero-dose intervals
-enter; uncharted gaps are not imputed. One rule for every cause of a zero-dose
-interval: liberation, SCUF-only, machine downtime, filter clotting. Full reasoning
-and the measured comparison live in `exposure._node_statistic_why` and
-`_discontinuation_handling_RESOLVED` in `config/lmtp_design.json`.
-
-Charted zero versus uncharted gap is pre-specified as a **bracket**, not a single
-choice (`exposure._node_statistic_sensitivity_LADDER`): S1 excludes gaps from the
-denominator (primary, upper bound), S2 counts gaps inside the charted span as
-downtime, S3 counts all node time (blocked on the discharge-timestamp defect). S1 is
-primary because gaps are not random: mortality falls from 73% at no gap to 53% at
->6h of gap, so S2 loads the exposure with recovery status. **Consequence for 02: the
-node covariates must carry the liberation predictors** (urine output, vasopressors,
-fluid balance, SOFA), or S2 is confounded in a direction already known.
+**Citation hygiene:** the competing-risks paper is Diaz, Hoffman & Hejazi, *Lifetime Data
+Analysis* 2024;30:213-236. It is *not* Diaz/Williams/Hoffman/Schenck (JASA 2023), which is
+cited elsewhere in the config for the vector-valued exposure point. The manuscript needs both.
 
 ## Methods are inherited BY REFERENCE. Do not copy them.
 

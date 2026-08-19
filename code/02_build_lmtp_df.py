@@ -951,6 +951,27 @@ def stage_7_assemble(exposure, cov_long, static, outcomes, cci_cols):
         for col in ("n_charted_hours", "gap_hours", "node_status"):
             cols[f"{col}_{k}"] = e[col].reindex(static["encounter_block"]).values
 
+    # Post-window exposure columns, one per outcome period beyond the exposure nodes.
+    #
+    # lmtp needs trt to be length 1 or exactly tau, and tau is the number of outcome
+    # columns (Task.R:125-130), so a 6-period outcome grid needs 6 exposure columns even
+    # though the policy only acts on the first three. These are a CONSTANT 0: there is no
+    # therapy to intervene on after the exposure window, and 03's shift function returns
+    # them untouched, which makes their density ratio exactly 1 and therefore free.
+    #
+    # Constant, not the last observed dose. Carrying dose forward would assert a therapy
+    # that is not being delivered, and would do so most often in the patients who were
+    # liberated earliest, i.e. the recovering ones.
+    n_expo = len(EXPO_WINDOWS)
+    n_periods = len(OUTCOME_GRID_D)
+    for k in range(n_expo + 1, n_periods + 1):
+        for arm in ("s1", "s2"):
+            cols[f"a{k}_{arm}"] = 0.0
+        cols[f"node_status_{k}"] = "post_exposure_window"
+    if n_periods > n_expo:
+        print(f"  emitted {n_periods - n_expo} post-window exposure periods "
+              f"(a{n_expo + 1}..a{n_periods}, constant 0, never intervened)")
+
     wide = pd.concat([static.reset_index(drop=True),
                       pd.DataFrame(cols, index=static.index).reset_index(drop=True)],
                      axis=1)
@@ -967,7 +988,8 @@ def stage_7_assemble(exposure, cov_long, static, outcomes, cci_cols):
 
     wide = wide.merge(outcomes, on="encounter_block", how="left", validate="one_to_one")
 
-    trt = [f"a{k}_{a}" for k in sorted(EXPO_WINDOWS) for a in ("s1", "s2")]
+    trt = [f"a{k}_{a}" for k in range(1, len(OUTCOME_GRID_D) + 1)
+           for a in ("s1", "s2")]
     out_cols = [c for c in wide.columns if c[:2] in ("y_", "d_", "c_")]
     assert wide[trt].notna().all().all(), "an exposure column still holds NA"
     assert wide[out_cols].notna().all().all(), "an outcome column holds NA"

@@ -37,9 +37,43 @@ outcome / competing / censoring indicators on the day 3/7/14/30 grid) plus
 `output/final_no_phi/<SITE>_lmtp_df_diagnostics.csv`. Its build walkthrough is
 `docs/lmtp_df_build_notes.md`.
 
-`03_lmtp_fit.R` does not exist and no R packages are installed. Whether `lmtp`
-v1.5.4 even builds on system R 4.3.1 is still unverified, and it should be settled
-before 03 is designed around it.
+**The R environment is installed and locked.** `lmtp` 1.5.4 is verified working on
+system R 4.3.1; `renv.lock` pins 74 packages. CRAN's macOS binaries for R 4.3 are frozen
+(newest `lmtp` binary is 1.5.2) and `gfortran` is absent, so the install is binaries for
+the compiled stack plus `lmtp@1.5.4` from source, which works because `lmtp` is pure R.
+See `code/R_PACKAGES.md`.
+
+`03_lmtp_fit.R` does not exist, and **one estimand question must be answered before it can
+be written**: see "The open question" below.
+
+Two package facts already changed the protocol, both verified by running them. `lmtp_ipw()`
+and `lmtp_sub()` are **defunct** and raise errors, so `estimation.diagnostics` is now
+SDR-vs-TMLE agreement plus the density-ratio distribution and trimmed fraction. And `trt`
+must be length 1 or exactly `tau`, where `tau` is the number of outcome columns, so the
+exposure grid (days 1, 2, 3) and the outcome grid (days 3, 7, 14, 30) were **merged into
+one 6-period axis**, `[1, 2, 3, 7, 14, 30]`. The policy intervenes in periods 1-3 only;
+unintervened periods carry a density ratio of exactly 1.000 and so cost nothing in
+positivity. Full derivation with source citations in `docs/lmtp_time_grid_decision.md`.
+
+## The open question, and the user asked to be prompted
+
+**Should the policy intervene only over the first 72h, or wherever CRRT dose is defined,
+out to day 30?** Raised 2026-08-18 by the user, deferred pending a closer read of Diaz.
+Blocks nothing already built; decides what the estimand is, so answer it before 03.
+
+The user observed that Diaz's competing-risks application never hits the grid mismatch that
+forced our 6-period axis, and was right. Diaz's exposure is *daily maximum respiratory
+support*, defined and intervened on at every t (Diaz, Hoffman & Hejazi, *Lifetime Data
+Analysis* 2024;30:213-236, S4.2 p.228, eq. 9 p.229, Fig. 1 p.229 over days 1-14), so his
+two grids are the same object. **Our asymmetry is a design choice, not a data limitation**:
+CRRT dose keeps existing past 72h, and tau=3 was a positivity decision. The substantive
+question is whether the policy we mean is "reduce dose for the first 72 hours" or "reduce
+dose for as long as the patient is on CRRT". Options and costs in
+`lmtp_design.json._intervention_horizon_OPEN` and todo 4b.
+
+**Citation hygiene:** the competing-risks paper (Diaz/Hoffman/Hejazi, Lifetime Data
+Analysis 2024) is *not* Diaz/Williams/Hoffman/Schenck (JASA 2023). Both are cited in this
+project; the manuscript must distinguish them.
 
 **Covariate definitions live in `config/lmtp_design.json` under `covariates`, and
 nowhere else.** A measurement rule is protocol by the test below: if one site pairs a

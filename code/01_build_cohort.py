@@ -5,7 +5,8 @@ Produces, per encounter block:
   - CRRT initiation datetime (the index event, t = 0)
   - weight at initiation (the dose denominator)
   - the effluent dose time series over the exposure window
-  - outcomes: death flag, event datetime, 30-day mortality anchored to initiation
+  - outcomes: death flag, death time, block-end time, and 30-day mortality
+    anchored to initiation
 
 Deliberately NOT produced here: baseline labs, SOFA, Table 1 covariates. Those
 are computed per exposure node in 02_build_lmtp_df.py, because the L_t -> A_t
@@ -599,10 +600,20 @@ blocks_with_dose, dose_series, strobe_6 = stage_6_dose(blocks_with_weight, crrt,
 # ---------------------------------------------------------------------------
 # %%
 def stage_7_outcomes(blocks_with_dose, pat):
-    """Death, event datetime, and 30-day mortality anchored to CRRT initiation.
+    """Death time, block-end time, and 30-day mortality anchored to CRRT initiation.
 
-    In-hospital by construction: death comes from discharge disposition due to unreliable death_dttm
-    , hospice discharge counts as a death.
+    In-hospital by construction: death comes from discharge disposition, because
+    clif_patient.death_dttm is 37% missing. Hospice discharge counts as a death.
+
+    Emits TWO time columns on purpose, because this design has two events:
+
+      death_dttm_by_discharge / days_to_death   null for anyone discharged alive
+      days_to_block_end                         populated for every block
+
+    Anything asking "was this block still at risk at hour h" wants days_to_block_end.
+    Anything asking "how long until death" wants days_to_death. An earlier single
+    column named event_dttm carried the first meaning in its name and the second in
+    its values, and downstream code read it the way the name suggested.
     """
     print(f"  stage 7 input: {len(blocks_with_dose):,} blocks")
     strobe = []
@@ -613,15 +624,28 @@ def stage_7_outcomes(blocks_with_dose, pat):
     disp = b["discharge_category"].str.lower()
     b["died_in_hospital"] = disp.isin(DEATH_DISPOSITIONS)
 
-    # Death as defined by discharge not death_dttm
-    b["event_dttm"] = b["block_discharge_dttm"].where(b["died_in_hospital"])
-    b["days_to_event"] = ((b["event_dttm"] - b["crrt_initiation_dttm"])
-                            .dt.total_seconds() / 86400)
+    # TWO different times, and conflating them is the trap this naming exists to stop.
+    #
+    # 1. WHEN THE PATIENT DIED. Taken from the discharge that ended the block, not from
+    #    clif_patient.death_dttm, which is 37% missing. Masked to deaths, so it is null
+    #    for the blocks discharged alive and days_to_death means exactly what it says.
+    b["death_dttm_by_discharge"] = b["block_discharge_dttm"].where(b["died_in_hospital"])
+    b["days_to_death"] = ((b["death_dttm_by_discharge"] - b["crrt_initiation_dttm"])
+                          .dt.total_seconds() / 86400)
+
+    # 2. WHEN THE BLOCK ENDED, whichever of the two events ended it. Populated for
+    #    every block. The competing-risks design needs this one: discharge alive is a
+    #    competing event, not an absence of an event, so a patient who walks out on day
+    #    9 stops being at risk on day 9 and that has to be representable. Named for the
+    #    block rather than for "the event" because there are two events, and a single
+    #    column called event_dttm cannot mean both.
+    b["days_to_block_end"] = ((b["block_discharge_dttm"] - b["crrt_initiation_dttm"])
+                              .dt.total_seconds() / 86400)
 
     # Mortality in the hospital at 30d post initiation of CRRT
     b["mortality_30d"] = (b["died_in_hospital"]
-                            & (b["days_to_event"] <= OUTCOME_HORIZON_D)).fillna(False)
-    impossible = int((b["died_in_hospital"] & (b["days_to_event"] < 0)).sum())
+                            & (b["days_to_death"] <= OUTCOME_HORIZON_D)).fillna(False)
+    impossible = int((b["died_in_hospital"] & (b["days_to_death"] < 0)).sum())
     if impossible:
         print(f"  WARNING: {impossible} deaths timed BEFORE CRRT initiation. Revisit ETL.")
 
@@ -634,8 +658,11 @@ def stage_7_outcomes(blocks_with_dose, pat):
     print(f"  death_dttm present for {int(disagree.sum()):,} of them "
             f"({100*disagree.sum()/n_died:.0f}%); vs discharge it differs by median "
             f"{gap_h.median():.1f}h, |diff|>24h for {int((gap_h.abs() > 24).sum())}")
-    print(f"  days from initiation to death: median {b['days_to_event'].median():.1f}, "
-            f"p95 {b['days_to_event'].quantile(.95):.1f}, max {b['days_to_event'].max():.1f}")
+    print(f"  days from initiation to death: median {b['days_to_death'].median():.1f}, "
+            f"p95 {b['days_to_death'].quantile(.95):.1f}, max {b['days_to_death'].max():.1f}")
+    print(f"  days from initiation to block end (any outcome): median "
+            f"{b['days_to_block_end'].median():.1f}, p95 "
+            f"{b['days_to_block_end'].quantile(.95):.1f}")
 
     strobe.append(("blocks entering stage 7", len(blocks_with_dose)))
     strobe.append(("blocks with an outcome", len(b)))

@@ -242,17 +242,17 @@ def stage_1_node_skeleton(cohort):
     """
     print(f"  stage 1 input: {len(cohort):,} blocks")
 
-    # NOT cohort["event_dttm"]. In 01, event_dttm is block_discharge_dttm.where(died),
-    # so it is the DEATH time and is null for every block discharged alive. Under a
-    # competing-risks design whose competing event IS discharge alive, the quantity
-    # needed here is when the block ENDED, however it ended. block_discharge_dttm is
-    # that, and it is complete for all 2,144 blocks.
+    # block_discharge_dttm, i.e. when the block ENDED however it ended. NOT
+    # death_dttm_by_discharge, which 01 masks to deaths and is null for everyone
+    # discharged alive. Under a design whose competing event IS discharge alive, a
+    # patient who walks out on day 9 stops being at risk on day 9.
     assert cohort["block_discharge_dttm"].notna().all(), "a block has no discharge time"
     base = cohort[["encounter_block", "crrt_initiation_dttm",
                    "block_discharge_dttm"]].copy()
-    n_null_event = int(cohort["event_dttm"].isna().sum())
-    print(f"  using block_discharge_dttm as block end "
-          f"(event_dttm is death-only and null for {n_null_event:,} survivors)")
+    n_survivors = int(cohort["death_dttm_by_discharge"].isna().sum())
+    print(f"  block end from block_discharge_dttm, complete for all {len(cohort):,} "
+          f"blocks ({n_survivors:,} of them discharged alive, so death-timed columns "
+          f"are null there by design)")
 
     rows = []
     for k, (s_h, e_h) in EXPO_WINDOWS.items():
@@ -825,12 +825,11 @@ def stage_6_outcomes(cohort, grid_days):
     emitted anyway because `lmtp` requires it for survival outcomes.
     """
     print(f"  stage 6 input: {len(cohort):,} blocks")
-    o = cohort[["encounter_block", "crrt_initiation_dttm", "block_discharge_dttm",
-                "died_in_hospital", "mortality_30d"]].copy()
-    # Time to the END of the block, whichever event ended it. See stage 1 on why
-    # cohort["days_to_event"] cannot be used: it is null for everyone who survived.
-    o["days_to_end"] = ((o["block_discharge_dttm"] - o["crrt_initiation_dttm"])
-                        .dt.total_seconds() / 86400)
+    o = cohort[["encounter_block", "days_to_block_end", "died_in_hospital",
+                "mortality_30d"]].copy()
+    # Time to the END of the block, whichever event ended it. 01 now supplies this
+    # directly as days_to_block_end; days_to_death is the other, death-only column.
+    o["days_to_end"] = o["days_to_block_end"]
     assert o["days_to_end"].notna().all(), "a block has no time to block end"
     n_impossible = int((o["days_to_end"] <= 0).sum())
     if n_impossible:
@@ -856,8 +855,8 @@ def stage_6_outcomes(cohort, grid_days):
         assert (o[f"d_d{b}"] >= o[f"d_d{a}"]).all(), "competing event is not monotone"
     assert not ((o[f"y_d{last}"] == 1) & (o[f"d_d{last}"] == 1)).any(), (
         "a block both died and was discharged alive")
-    return o.drop(columns=["crrt_initiation_dttm", "block_discharge_dttm",
-                           "days_to_end", "died_in_hospital", "mortality_30d"])
+    return o.drop(columns=["days_to_block_end", "days_to_end", "died_in_hospital",
+                           "mortality_30d"])
 
 
 # %%

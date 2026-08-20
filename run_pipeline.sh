@@ -50,6 +50,16 @@ if [ "$HAS_SETTINGS" != "True" ]; then
     exit 1
 fi
 
+# Lockfile completeness. Cheap, needs no R, and fails BEFORE step 01's long table
+# read rather than at step 03's library() call an hour later. nanoparquet shipped
+# unrecorded in renv.lock and only the coordinating machine survived it, because the
+# package happened to be installed there. See code/check_r_deps.py.
+if ! uv run --quiet python "$SCRIPT_DIR/code/check_r_deps.py"; then
+    echo "ERROR: R dependency preflight failed. Nothing was run." >&2
+    exit 1
+fi
+echo
+
 # --- Step inventory ----------------------------------------------------------
 # There is no step 00. The plan to vendor 00_cohort.py from
 # CLIF-epidemiology-of-CRRT was abandoned on 2026-08-16; code/vendor/ now pins two

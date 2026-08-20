@@ -49,6 +49,17 @@ if ($HasSettings -ne "True") {
     exit 1
 }
 
+# Lockfile completeness. Cheap, needs no R, and fails BEFORE step 01's long table
+# read rather than at step 03's library() call an hour later. nanoparquet shipped
+# unrecorded in renv.lock and only the coordinating machine survived it, because the
+# package happened to be installed there. See code\check_r_deps.py.
+& uv run --quiet python (Join-Path $ScriptDir "code\check_r_deps.py")
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "R dependency preflight failed. Nothing was run."
+    exit 1
+}
+Write-Host ""
+
 # --- Step inventory ----------------------------------------------------------
 # There is no step 00. The plan to vendor 00_cohort.py from
 # CLIF-epidemiology-of-CRRT was abandoned on 2026-08-16; code\vendor\ now pins two

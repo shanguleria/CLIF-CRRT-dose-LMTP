@@ -8,7 +8,7 @@ replacement therapy (CRRT) dose across the CLIF consortium.
 > ### Status: all three steps are built. One known blocker.
 >
 > `01_build_cohort.py`, `02_build_lmtp_df.py` and `03_lmtp_fit.R` all exist and
-> run; the R environment is installed and locked (`renv.lock`, 74 packages,
+> run; the R environment is installed and locked (`renv.lock`, 75 packages,
 > `lmtp` 1.5.4 on R 4.3.1), and `03`'s smoke stage passes.
 >
 > **Known blocker:** step 02 halts by design when a vasopressor cannot be unit
@@ -265,11 +265,19 @@ its minor releases have changed CLIF datetime timezone handling, which silently
 moves every windowed exposure node. Presentation libraries float. For sites
 without uv, `requirements.txt` carries the same pins.
 
-`renv.lock` pins **74** R packages including `lmtp` 1.5.4. This repo builds its own
+`renv.lock` pins **75** R packages including `lmtp` 1.5.4. This repo builds its own
 lock against R 4.3.1 and deliberately does **not** reuse the `fluid_ARDS` lock,
 which targets 4.5.2 and fails to restore here. CRAN's macOS binaries for R 4.3 are
 frozen at `lmtp` 1.5.2, so 1.5.4 installs from source; this works because `lmtp` is
 pure R. Detail and the version landmine: `code/R_PACKAGES.md`.
+
+A lockfile is only a contract if something enforces it. `code/check_r_deps.py`
+asserts that every package `code/*.R` calls `library()` on is recorded in
+`renv.lock`, and both runners run it in preflight, before step 01's long table
+read. It needs neither R nor an installed library: the failure it catches is a
+maintainer's omission, not a site's broken environment. `nanoparquet` shipped
+unrecorded and only the coordinating machine survived it, because the package
+happened to be installed there.
 
 ---
 
@@ -374,7 +382,7 @@ CRRT-dose-lmtp/
 ├── uv.lock                       Resolved Python lockfile
 ├── .python-version               3.11.15
 ├── .Rprofile                     Activates renv
-├── renv.lock                     74 R packages, lmtp 1.5.4 on R 4.3.1
+├── renv.lock                     75 R packages, lmtp 1.5.4 on R 4.3.1
 ├── renv/                         R environment
 ├── run_pipeline.sh / .ps1        Runners (macOS/Linux and Windows)
 │
@@ -382,6 +390,7 @@ CRRT-dose-lmtp/
 │   ├── 01_build_cohort.py        Step 01
 │   ├── 02_build_lmtp_df.py       Step 02
 │   ├── 03_lmtp_fit.R             Step 03, gated stages
+│   ├── check_r_deps.py           Asserts renv.lock records every package the R code loads
 │   ├── R_PACKAGES.md             R stack and the version landmine
 │   ├── README.md
 │   └── vendor/
@@ -401,6 +410,7 @@ CRRT-dose-lmtp/
 │
 ├── references/                   Papers (gitignored; README tracked)
 └── tests/
+    ├── test_r_deps.py            renv.lock completeness against code/*.R
     └── test_vendor_integrity.py  Byte-equality guard on the pinned config files
 ```
 

@@ -17,6 +17,51 @@ replacement therapy (CRRT) dose across the CLIF consortium.
 
 ---
 
+## Quick start
+
+```bash
+# 1. Clone and install both stacks
+git clone https://github.com/shanguleria/CLIF-CRRT-dose-LMTP.git
+cd CLIF-CRRT-dose-LMTP
+uv sync
+Rscript -e 'renv::restore(prompt = FALSE)'
+
+# 2. Create your site config
+cp config/config_template.json config/config.json
+#    set site_name, data_directory (your CLIF path), timezone, has_crrt_settings
+
+# 3. Build the frame and run the smoke fit
+./run_pipeline.sh                       # Windows: .\run_pipeline.ps1
+
+# 4. Read the diagnostics, THEN estimate
+Rscript code/03_lmtp_fit.R gate         # diagnostics only, no effect estimate
+Rscript code/03_lmtp_fit.R expand       # the full delta ladder
+
+# 5. Send output/final_no_phi/ to the coordinating center
+#    (study Box folder; the link comes from the coordinating center)
+```
+
+**Five things to know before you start.**
+
+1. **`has_crrt_settings` must be true.** Dose is the exposure and cannot be
+   computed without CRRT flow rates, so both runners refuse to start without it.
+2. **Step 3 stops on purpose.** The runner builds the frame and runs a cheap smoke
+   fit, then hands you back the prompt. Step 4 is separate because stage 3 must not
+   run until a human has read stage 2's diagnostics.
+3. **Step 02 may halt on vasopressor units.** That is a deliberate guard, not a
+   crash. See [Known issues](#known-issues) before working around it.
+4. **Send `output/final_no_phi/` only.** `output/intermediate_phi/` is
+   patient-level and never leaves your site. PHI-check before sending.
+5. **Do not edit `config/lmtp_design.json`** to make a run work. It is the
+   protocol, identical at every site, and changing it changes what is being
+   estimated.
+
+Fuller detail: [Configuration](#configuration), [Prerequisites](#prerequisites),
+[Running the pipeline](#running-the-pipeline),
+[Onboarding a new site](#onboarding-a-new-site).
+
+---
+
 ## Objective
 
 Estimate the effect of **reducing delivered CRRT dose** on 30-day in-hospital
@@ -389,23 +434,8 @@ answer is auditable:
 
 ## Onboarding a new site
 
-```bash
-# 1. clone and install both stacks
-git clone https://github.com/shanguleria/CLIF-CRRT-dose-LMTP.git
-cd CLIF-CRRT-dose-LMTP
-uv sync
-Rscript -e 'renv::restore()'
-
-# 2. create your site config (lmtp_design.json stays shared and unchanged)
-cp config/config_template.json config/config.json
-#    set site_name, data_directory, timezone, clif_version, has_crrt_settings
-
-# 3. build the frame and run the smoke fit
-./run_pipeline.sh                       # Windows: .\run_pipeline.ps1
-
-# 4. read the diagnostics BEFORE any effect estimate
-Rscript code/03_lmtp_fit.R gate
-```
+The commands are in [Quick start](#quick-start); they are not repeated here, so
+the two cannot drift apart. This section is what to check once they have run.
 
 **Before trusting any number, check three things.**
 

@@ -33,7 +33,47 @@ suppressPackageStartupMessages({
   library(nanoparquet)
   library(jsonlite)
   library(SuperLearner)
+  library(progressr)
+  library(future)
 })
+
+# ---------------------------------------------------------------------------
+# Progress and parallelism. Neither changes a single estimate; both change how long
+# you wait and how much you can see while waiting.
+#
+# PROGRESS. lmtp creates progressr::progressor(tau * folds * 2) (estimators.R:127) and
+# ticks it once per fold per time point, but progressr emits NOTHING unless a handler is
+# registered, which is why an unconfigured run looks hung for half an hour. handler_newline
+# writes one discrete line per update, which is what a log file wants; a \r-style bar would
+# render as a single unreadable smear.
+#
+# PARALLELISM. lmtp wraps each cross-fitting fold in future::future(..., seed = TRUE)
+# (sdr.R:5, density_ratios.R:10, tmle.R:7). The default plan is SEQUENTIAL, so an
+# unconfigured run uses one core. `seed = TRUE` means future draws parallel-safe
+# L'Ecuyer-CMRG streams from the calling session's RNG state, so results are IDENTICAL
+# under any plan given the same seed. That is what makes this safe to turn on while the
+# protocol requires a fixed, shared seed.
+# ---------------------------------------------------------------------------
+handlers(global = TRUE)
+handlers(handler_newline())
+
+# ...with one caveat worth knowing rather than rediscovering: because lmtp launches ALL
+# folds as futures and collects them in a single future::value() call, progressr relays
+# the worker updates only at collection. So the 120 steps arrive in a burst at the end of
+# each fit, not live. Live per-fold progress is not obtainable without rewriting lmtp's
+# fold loop. To watch a run from outside, compare CPU time against elapsed:
+#
+#   ps -eo etime,time,%cpu,command | grep "[e]xec/R"
+#
+# advancing CPU at high %cpu means it is computing; a stalled CPU time means it is not.
+# The `say()` checkpoints below are the in-log substitute: they stamp elapsed minutes so
+# the log alone answers "how long has this been going".
+RUN_T0 <- Sys.time()
+say <- function(fmt, ...) {
+  cat(sprintf("[%5.1f min] ", as.numeric(difftime(Sys.time(), RUN_T0, units = "mins"))),
+      sprintf(fmt, ...), "\n", sep = "")
+  flush.console()
+}
 
 STAGE <- commandArgs(trailingOnly = TRUE)[1]
 if (is.na(STAGE)) STAGE <- "smoke"
@@ -63,7 +103,20 @@ EXPO_PERIODS  <- TIME$exposure_periods
 K             <- if (identical(EST$k, "Inf")) Inf else as.numeric(EST$k)
 SEED          <- EST$seed
 
+# Worker count is a SITE setting, not protocol: it changes wall-clock and nothing else,
+# so two sites choosing differently still produce comparable estimates. That is exactly
+# the test config.json is for.
+N_WORKERS <- if (!is.null(config$n_workers)) config$n_workers else
+  max(1, future::availableCores() - 2)
+if (N_WORKERS > 1) {
+  plan(multisession, workers = N_WORKERS)
+} else {
+  plan(sequential)
+}
+
 cat(sprintf("stage: %s\n", STAGE))
+cat(sprintf("parallel: %s over %d worker(s) of %d cores\n",
+            class(plan())[1], N_WORKERS, future::availableCores()))
 cat(sprintf("protocol: tau=%d over days %s; policy intervenes in periods %s\n",
             TAU, paste(GRID, collapse = "/"), paste(EXPO_PERIODS, collapse = ",")))
 cat(sprintf("  delta primary %s, ladder {%s}, floor %s, k=%s, folds=%d, seed=%d\n",
@@ -441,10 +494,10 @@ imp <- impute_and_encode(d, vars); d <- imp$d; vars <- imp$vars
 if (STAGE == "smoke") {
   cat("\n=== STAGE 1: smoke test (SL.glm, folds = 2) ===\n")
   cat("Only question: does lmtp accept this frame, including the constant a4-a6 columns?\n")
-  t0 <- Sys.time()
+  say("starting smoke fit")
   fit <- fit_policy(d, A_S1, EXPO_COLS_S1, vars, DELTA_PRIMARY,
                     learners = "SL.glm", folds = 2)
-  cat(sprintf("  completed in %.1f min\n", as.numeric(difftime(Sys.time(), t0, units = "mins"))))
+  say("smoke fit complete")
   dr <- fit$density_ratios
   cat(sprintf("  density_ratios: %d x %d\n", nrow(dr), ncol(dr)))
   cat("  per-period max density ratio: ",
@@ -474,12 +527,11 @@ if (STAGE == "gate") {
   learners <- EST$learners_outcome
   t0 <- Sys.time()
 
-  cat("  fitting natural course (shift = NULL) ...\n")
+  say("fitting natural course (shift = NULL); %d internal steps expected", TAU * EST$folds * 2)
   nat <- fit_policy(d, A_S1, EXPO_COLS_S1, vars, NULL, learners, EST$folds)
-  cat("  fitting delta =", DELTA_PRIMARY, "under S1 ...\n")
+  say("natural course done. fitting delta = %s under S1", DELTA_PRIMARY)
   shf <- fit_policy(d, A_S1, EXPO_COLS_S1, vars, DELTA_PRIMARY, learners, EST$folds)
-  cat(sprintf("  both fits completed in %.1f min\n",
-              as.numeric(difftime(Sys.time(), t0, units = "mins"))))
+  say("both fits complete")
 
   diag <- rbind(diagnose(nat, "natural_course", d, A_S1),
                 diagnose(shf, sprintf("delta_%s_s1", DELTA_PRIMARY), d, A_S1))
@@ -537,7 +589,7 @@ if (STAGE == "expand") {
     for (delta in DELTA_LADDER) {
       for (est in c("sdr", "tmle")) {
         lab <- sprintf("delta_%s_%s_%s", delta, arm, est)
-        cat("  fitting", lab, "...\n")
+        say("fitting %s (%d of %d)", lab, length(results) + 1L, 2L * length(DELTA_LADDER) * 2L)
         f <- fit_policy(d, cols, expo, vars, delta, learners, EST$folds, estimator = est)
         ct <- lmtp_contrast(f, ref = nat, type = "additive")
         results[[lab]] <- data.frame(policy = lab, arm = arm, delta = delta, estimator = est,

@@ -160,6 +160,54 @@ def _bounds(table: str, category: str):
     return None, None
 
 
+def _apply_med_bounds(meds):
+    """Null implausible RAW medication doses using clifpy's per-drug, per-unit limits.
+
+    Separate from _apply_bounds because the medication schema is nested one level deeper:
+    tables -> medication_admin_continuous -> med_dose -> <drug> -> <unit> -> {min, max}.
+    A dose is only comparable to a bound within its own charted unit, so this must run
+    BEFORE unit conversion.
+
+    This is the half of the problem a unit guard cannot see: these values are already in
+    their charted unit, so nothing about them is a conversion failure. They are simply
+    wrong at source. Not every drug is covered -- clifpy has no angiotensin entry at all --
+    so this is a partial net and the unit guard is what catches the rest.
+    """
+    node = (_clifpy_outliers.get("tables", {})
+                            .get("medication_admin_continuous", {})
+                            .get("med_dose", {}))
+    if not node:
+        print("    no medication bounds in the clifpy config; none applied")
+        return meds
+    meds = meds.copy()
+    total, uncovered = 0, []
+    for cat, by_unit in node.items():
+        m_cat = meds["med_category"] == cat
+        if not m_cat.any():
+            continue
+        for unit, lim in (by_unit or {}).items():
+            m = m_cat & meds["med_dose_unit"].astype("string").str.lower().eq(unit.lower())
+            if not m.any():
+                continue
+            lo, hi = lim.get("min"), lim.get("max")
+            bad = m & meds["med_dose"].notna() & ~meds["med_dose"].between(
+                lo if lo is not None else -np.inf, hi if hi is not None else np.inf)
+            if bad.any():
+                print(f"    {cat} [{unit}] bounds [{lo}, {hi}]: "
+                      f"{int(bad.sum()):,} of {int(m.sum()):,} nulled "
+                      f"(max was {meds.loc[m, 'med_dose'].max():,.1f})")
+                meds.loc[bad, "med_dose"] = np.nan
+                total += int(bad.sum())
+    covered = set(node)
+    for cat in sorted(set(meds["med_category"].dropna()) - covered):
+        uncovered.append(cat)
+    if uncovered:
+        print(f"    NO clifpy bound exists for: {', '.join(uncovered)} "
+              f"(the unit guard is the only check for these)")
+    print(f"    medication bounds: {total:,} raw doses nulled")
+    return meds
+
+
 def _apply_bounds(df, value_col, table, category, label=None):
     """Null out-of-range values in place and report how many went. Never drops rows."""
     lo, hi = _bounds(table, category)
@@ -574,15 +622,64 @@ def _nee(meds, vitals_weight):
     if not len(meds):
         return pd.DataFrame(columns=["encounter_block", "node", "nee", "inotrope"])
 
+    preferred = {**{d: "mcg/kg/min" for d in NEE_DRUGS + INOTROPES},
+                 "vasopressin": "u/min"}
+
+    # Bound the RAW doses before conversion. clifpy ships per-drug, per-unit limits for
+    # medication_admin_continuous and nothing here was applying them, so source-charting
+    # errors flowed straight into NEE: dopamine to 800,000 mcg/kg/min, phenylephrine to
+    # 50,000, vasopressin to 700 U/min. These are already in their charted unit, so they
+    # are not conversion failures and no unit check can catch them.
+    meds = _apply_med_bounds(meds)
+
     conv, _ = convert_dose_units_by_med_category(
-        meds, vitals_df=vitals_weight,
-        preferred_units={**{d: "mcg/kg/min" for d in NEE_DRUGS + INOTROPES},
-                         "vasopressin": "u/min"})
+        meds, vitals_df=vitals_weight, preferred_units=preferred)
     conv = conv.rename(columns={"med_dose_converted": "dose_std"})
-    bad_unit = conv["dose_std"].isna() & conv["med_dose"].notna()
-    if bad_unit.any():
-        print(f"    {int(bad_unit.sum()):,} of {len(conv):,} med rows could not be "
-              f"converted to a standard unit and are dropped")
+
+    # ------------------------------------------------------------------
+    # THE UNIT GUARD. Do not trust the number; check the unit it came back in.
+    #
+    # clifpy does not null a dose it cannot convert. It leaves the RAW value in
+    # med_dose_converted and reports the failure in med_dose_unit_converted. So a
+    # checking-for-NA guard sees nothing wrong, and 20 ng/kg/min of angiotensin becomes
+    # "20 mcg/kg/min", which the NEE coefficient of 10 then turns into 200. Measured
+    # here before this guard existed: nee_0 reached 8,001 mcg/kg/min-equivalent, with
+    # 601.0 and 400.2 at later nodes -- 10x raw angiotensin values, the fingerprint.
+    #
+    # This RAISES rather than dropping the rows, deliberately. At this site every
+    # angiotensin row is charted in ng/kg/min, so dropping would remove the angiotensin
+    # contribution from NEE entirely -- and angiotensin goes to patients in refractory
+    # shock. That is differential misclassification of a confounder in a known direction,
+    # in the sickest patients. A loud stop is better than a quiet bias, and across ten
+    # sites it is the only thing preventing each site from silently computing a different
+    # NEE.
+    # ------------------------------------------------------------------
+    want = conv["med_category"].map(preferred).str.lower()
+    got = conv["med_dose_unit_converted"].astype("string").str.lower()
+    mismatch = conv["med_dose"].notna() & (got.isna() | (got != want))
+    if mismatch.any():
+        bad = (conv.loc[mismatch]
+                   .groupby(["med_category", "med_dose_unit", "med_dose_unit_converted"],
+                            dropna=False)
+                   .size().reset_index(name="n_rows")
+                   .sort_values("n_rows", ascending=False))
+        lines = "\n".join(
+            f"      {r.med_category:<16} charted {str(r.med_dose_unit):<14} "
+            f"-> came back as {str(r.med_dose_unit_converted):<14} {r.n_rows:>8,} rows"
+            for r in bad.itertuples())
+        raise ValueError(
+            "MEDICATION UNIT CONVERSION FAILED and the doses cannot be trusted.\n\n"
+            f"{len(bad)} drug/unit combination(s), {int(mismatch.sum()):,} of "
+            f"{len(conv):,} rows:\n\n{lines}\n\n"
+            "  clifpy leaves the RAW number in med_dose_converted when it cannot convert,\n"
+            "  so these values are in the CHARTED unit while the NEE coefficients assume\n"
+            "  the preferred one. Using them would scale the dose by up to 1000x.\n\n"
+            "  This is deliberately fatal rather than dropped: dropping would remove a\n"
+            "  whole drug from NEE for the patients who received it, which biases a\n"
+            "  confounder in a known direction in the sickest patients.\n\n"
+            "  A whole drug/unit combination failing is a converter gap; scattered rows\n"
+            "  usually mean a missing weight for a weight-based unit. Fix the converter or\n"
+            "  the source units, then re-run.")
     conv = _to_hours(conv, "admin_dttm")
 
     # A stop is a rate of zero, not a missing value.

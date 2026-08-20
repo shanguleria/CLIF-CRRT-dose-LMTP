@@ -29,6 +29,8 @@ Rscript -e 'renv::restore(prompt = FALSE)'
 # 2. Create your site config
 cp config/config_template.json config/config.json
 #    set site_name, data_directory (your CLIF path), timezone, has_crrt_settings
+#    Several datasets on one machine? Name each config for its site
+#    (config_SiteA.json) and pass the name: ./run_pipeline.sh SiteA
 
 # 3. Build the frame and run the smoke fit
 ./run_pipeline.sh                       # Windows: .\run_pipeline.ps1
@@ -37,7 +39,7 @@ cp config/config_template.json config/config.json
 Rscript code/03_lmtp_fit.R gate         # diagnostics only, no effect estimate
 Rscript code/03_lmtp_fit.R expand       # the full delta ladder
 
-# 5. Send output/final_no_phi/ to the coordinating center
+# 5. Send output/<your site>/final_no_phi/ to the coordinating center
 #    (study Box folder; the link comes from the coordinating center)
 ```
 
@@ -50,8 +52,8 @@ Rscript code/03_lmtp_fit.R expand       # the full delta ladder
    run until a human has read stage 2's diagnostics.
 3. **Step 02 may halt on vasopressor units.** That is a deliberate guard, not a
    crash. See [Known issues](#known-issues) before working around it.
-4. **Send `output/final_no_phi/` only.** `output/intermediate_phi/` is
-   patient-level and never leaves your site. PHI-check before sending.
+4. **Send `output/<site>/final_no_phi/` only.** `output/<site>/intermediate_phi/`
+   is patient-level and never leaves your site. PHI-check before sending.
 5. **Do not edit `config/lmtp_design.json`** to make a run work. It is the
    protocol, identical at every site, and changing it changes what is being
    estimated.
@@ -191,59 +193,209 @@ a tidiness problem.
 
 | | File | Contains | Differs by site? |
 |---|---|---|---|
-| **Site** | `config/config.json` | `data_directory`, `filetype`, `timezone`, `site_name`, `has_crrt_settings`, `n_workers` | **Yes** |
+| **Site** | `config/config.json` (or `config/config_<SITE>.json`) | `data_directory`, `filetype`, `timezone`, `site_name`, `has_crrt_settings`, `n_workers` | **Yes** |
 | **Protocol** | `config/lmtp_design.json` | delta ladder, floor, node schedule, study window, estimator, competing event, cohort rules | **No.** Identical everywhere |
 
 The test: *if two sites set this differently, is the pooled result still
 meaningful?* If no, it is protocol.
 
-Copy the template and edit it for your site:
+### Creating your site config
 
 ```bash
 cp config/config_template.json config/config.json
 ```
 
-```json
-{
-    "site_name": "Your_Site_Name",
-    "clif_version": "2.1.0",
-    "data_directory": "/path/to/clif/tables/",
-    "filetype": "parquet",
-    "timezone": "America/Chicago",
-    "project_root": "/path/to/CRRT-dose-lmtp",
-    "output_dir": "output",
-    "has_crrt_settings": true,
-    "n_workers": 6
-}
-```
+Then edit the copy. Every field, and what it does:
 
-`data_directory`, `filetype` and `timezone` are named to match what `clifpy`
-expects, so one file serves both the library and this project's own code with no
-translation layer. Note this differs from the sibling `CLIF-epidemiology-of-CRRT`,
-which calls the first two `tables_path` and `file_type`, so a config **cannot** be
-copied between the two repos unchanged.
+| Field | Example | What it controls |
+|---|---|---|
+| `site_name` | `"SiteA"` | **Load-bearing.** The directory all output is written under (`output/<site_name>/`) and the `site_id` stamped into every shareable file. Letters, digits, underscore and hyphen only |
+| `clif_version` | `"2.1.0"` | The CLIF **spec** version your tables implement. Not a dataset or ETL release number |
+| `data_directory` | `"/data/clif/2.1.0/"` | Absolute path to the directory holding `clif_<table>.parquet` |
+| `filetype` | `"parquet"` | Passed straight to `clifpy` |
+| `timezone` | `"America/Chicago"` | Your site's local zone. Every exposure node is a wall-clock window, so this shifts results if wrong |
+| `has_crrt_settings` | `true` | Must be `true`. Both runners refuse to start otherwise |
+| `n_workers` | `6` | Parallel workers for the R fit. Wall-clock only |
 
-`n_workers` is a **site** setting, not protocol: `lmtp` wraps each cross-fitting
-fold in `future(..., seed = TRUE)`, so results are identical under any worker
-count and only wall-clock changes. Set it to 1 to force sequential.
+Three of these deserve more than a table row.
 
-`config/config.json` is gitignored and never leaves your site.
+**`clif_version` is the spec version.** If your tables came from a conversion with
+its own release number (a MIMIC-to-CLIF build, for instance), that number is *not* a
+CLIF version and does not belong here.
+
+**`data_directory`, `filetype` and `timezone` are named to match what `clifpy`
+expects**, so one file serves both the library and this project's own code with no
+translation layer. This differs from the sibling `CLIF-epidemiology-of-CRRT`, which
+calls the first two `tables_path` and `file_type`, so a config **cannot** be copied
+between the two repos unchanged.
+
+**`n_workers` is a site setting, not protocol.** `lmtp` wraps each cross-fitting
+fold in `future(..., seed = TRUE)`, so results are identical under any worker count
+given the same seed and only wall-clock changes. Set it to 1 to force sequential.
+
+`config/config.json` and any `config/config_*.json` are gitignored and never leave
+your site.
 
 `config/lmtp_design.json` holds the estimand itself. **Do not edit it to make a run
 work.** Changing a value there changes what is being estimated, and it is the
 `definition_version` stamped onto every shareable output.
 
+### Site-specific configs: running several datasets on one machine
+
+Most consortium sites can skip this. It applies when one machine has access to more
+than one site's CLIF data and you want to run the pipeline over each in turn, keeping
+the results separate.
+
+The model is one config file per dataset, named for the site, selected by name at run
+time. Everything a run reads and writes follows from that one name.
+
+#### 1. Create a config per dataset
+
+```bash
+cp config/config_template.json config/config_SiteA.json
+cp config/config_template.json config/config_SiteB.json
+```
+
+The filename suffix is the name you will type on the command line. It must be letters,
+digits, underscore or hyphen, and it must equal the `site_name` inside the file.
+
+#### 2. Edit each one
+
+Only two fields really differ per dataset. The rest usually stay at their template
+values, but check `timezone` if a dataset is from another region.
+
+| Field | Set it to |
+|---|---|
+| `site_name` | The same name as the filename suffix. `config_SiteA.json` -> `"SiteA"` |
+| `data_directory` | Absolute path to that dataset's `clif_<table>.parquet` files |
+| `timezone` | That dataset's local zone. Exposure nodes are wall-clock windows, so a wrong zone shifts every one of them |
+| `clif_version` | The CLIF **spec** version those tables implement. A conversion or ETL release number is not a CLIF version and does not belong here |
+| `has_crrt_settings` | Must be `true`. A dataset without CRRT flow rates cannot participate, because dose is the exposure |
+
+Full field-by-field detail is in [Creating your site config](#creating-your-site-config).
+
+#### 3. Check each config before running anything
+
+This resolves the config, reports what the run would do, and exits non-zero if it is
+not usable. It opens no CLIF table, so it costs a second rather than a table read:
+
+```bash
+uv run python code/_site.py --list-sites      # which sites have configs
+uv run python code/_site.py --check SiteA     # is SiteA ready?
+```
+
+```
+config          /.../config/config_SiteA.json
+site_name       SiteA
+data_directory  /data/siteA/clif/2.1.0
+output would go /.../output/SiteA
+
+READY.
+```
+
+A config still holding the template placeholder, pointing at a missing directory, or
+declaring `has_crrt_settings: false` reports `NOT READY` with the reason and exits 1.
+
+#### 4. Run, naming the site every time
+
+```bash
+./run_pipeline.sh SiteA                      # 01 -> 02 -> 03 smoke, into output/SiteA/
+Rscript code/03_lmtp_fit.R gate   --site SiteA
+Rscript code/03_lmtp_fit.R expand --site SiteA
+```
+
+Then repeat for `SiteB`. The runs are independent and can be done in any order; nothing
+is shared between them except the protocol in `config/lmtp_design.json`.
+
+#### Command reference
+
+Every entry point takes the site the same way. Windows uses `.\run_pipeline.ps1 SiteA`.
+
+| What you want | Command |
+|---|---|
+| List configured sites | `uv run python code/_site.py --list-sites` |
+| Check one is usable | `uv run python code/_site.py --check SiteA` |
+| Full build + smoke fit | `./run_pipeline.sh SiteA` |
+| Just rebuild the cohort | `uv run python code/01_build_cohort.py --site SiteA` |
+| Just rebuild the frame | `uv run python code/02_build_lmtp_df.py --site SiteA` |
+| Diagnostics, no estimate | `Rscript code/03_lmtp_fit.R gate --site SiteA` |
+| The full delta ladder | `Rscript code/03_lmtp_fit.R expand --site SiteA` |
+| A config outside `config/` | `CLIF_CONFIG=/abs/path.json ./run_pipeline.sh` |
+
+Outputs for each land in `output/SiteA/`, `output/SiteB/`, and so on; send only
+`output/<site>/final_no_phi/`. See [Where outputs land](#where-outputs-land).
+
+#### How the site is resolved
+
+Every step applies the same order:
+
+| Precedence | How | Resolves to | Output goes to |
+|---|---|---|---|
+| 1 | `--site NAME` (or `./run_pipeline.sh NAME`) | `config/config_<NAME>.json` | `output/<NAME>/` |
+| 2 | `CLIF_CONFIG=/abs/path.json` | that path | `output/<site_name in that file>/` |
+| 3 | nothing | `config/config.json` | `output/<site_name in that file>/` |
+
+Row 3 is the single-site workflow, unchanged. The rule lives in `code/_site.py`;
+`03_lmtp_fit.R` carries an R transcription because R cannot import it, and
+`tests/test_site_resolution.py` runs the R script to assert the two agree.
+
+#### Two rules that stop a mislabeled run
+
+**On a multi-site machine, do not keep a `config/config.json`.** Once every dataset has
+a named config, a default has no job left except to decide what happens when someone
+forgets `--site`, and the answer you want is "it stops", not "it runs whichever site the
+default happens to describe". With no default present, every entry point exits 1 and
+names the sites you do have:
+
+```
+$ ./run_pipeline.sh
+ERROR: no default config at config/config.json
+       This machine has per-site configs. Name one:
+         ./run_pipeline.sh SiteA
+         ./run_pipeline.sh SiteB
+       (or create config/config.json for a single-site setup)
+```
+
+A site with one dataset sees the original "copy the template" message instead, since it
+has no per-site configs to list.
+
+**The name on the command line must match `site_name` inside the file**, or the run
+refuses to start. Without that check, `config_SiteA.json` declaring `site_name`
+`"SiteB"` would write SiteA's results into SiteB's directory stamped `SiteB`, and
+nothing downstream could tell.
+
+
 ### Where outputs land
+
+Outputs are nested per site, created on first run:
+
+```
+output/<site_name>/
+├── final_no_phi/        aggregate, shareable
+├── intermediate_phi/    patient-level, never leaves the site
+└── logs/                clifpy validation logs
+```
 
 | Path | Contents | Shareable |
 |---|---|---|
-| `output/final_no_phi/` | Aggregate estimates, diagnostics, the federated export set | **Yes.** This is what the coordinating center receives |
-| `output/intermediate_phi/` | Patient-level node datasets, fitted objects | **No. Never leaves the site** |
-| `output/logs/` | Run and clifpy validation logs | Review before sharing |
+| `output/<site>/final_no_phi/` | Aggregate estimates, diagnostics, the federated export set | **Yes.** This is what the coordinating center receives |
+| `output/<site>/intermediate_phi/` | Patient-level node datasets, fitted objects | **No. Never leaves the site** |
+| `output/<site>/logs/` | clifpy validation logs | Review before sharing |
+
+A site running alone still gets `output/<its own name>/...` rather than `output/...`: the
+nesting is unconditional, so the path always says which site produced the file. The
+patient-level artifacts carry no site in their filenames, so before the nesting existed
+a second site's run overwrote the first's in place.
 
 Nothing person-level is ever exported. The federated contract is per-site point
 estimates, the T x T influence-function covariance matrix, n, learner
 coefficients, and diagnostics.
+
+Everything under `output/` is gitignored. Site directories are created on first run
+from `site_name`, so they are not tracked placeholders; the "never leaves the site"
+warning label in each `intermediate_phi/` is written at runtime by
+`_site.ensure_site_dirs()`, which survives a `git clean` in a way a tracked file
+would not.
 
 ---
 
@@ -299,12 +451,23 @@ Rscript code/03_lmtp_fit.R gate        # diagnostics ONLY, no effect estimate
 Rscript code/03_lmtp_fit.R expand      # the full delta ladder
 ```
 
+Add a site name to run a config other than `config/config.json`. See
+[Site-specific configs](#site-specific-configs-running-several-datasets-on-one-machine):
+
+```bash
+./run_pipeline.sh SiteA
+Rscript code/03_lmtp_fit.R gate --site SiteA
+```
+
 ### Windows
 
 ```powershell
 .\run_pipeline.ps1
 Rscript code\03_lmtp_fit.R gate
 Rscript code\03_lmtp_fit.R expand
+# a named site:
+.\run_pipeline.ps1 SiteA
+Rscript code\03_lmtp_fit.R gate --site SiteA
 # if execution policy blocks it:
 #   powershell -ExecutionPolicy Bypass -File .\run_pipeline.ps1
 ```
@@ -328,13 +491,12 @@ is ~40 s at V=10, and one `lmtp` fit is `tau x folds x 2 = 120` such calls.
 | 02 | Python | `code/02_build_lmtp_df.py` | Exposure and covariate nodes at 0/24/48h; `L_t -> A_t` ordering asserted at import |
 | 03 | R | `code/03_lmtp_fit.R` | `lmtp_sdr` fit over the delta ladder, positivity diagnostics, influence-function exports |
 
+Two files in `code/` are not pipeline steps. `_site.py` resolves which site a run is
+for and where it writes. `check_r_deps.py` asserts `renv.lock` records every package
+`code/*.R` loads; both runners call it in preflight.
+
 **There is no step 00.** See [Cohort identification](#cohort-identification) for why
 the vendoring plan was abandoned.
-
-Step 03 takes a stage argument: `smoke` (one cheap fit, SL.glm, folds = 2),
-`gate` (natural course plus the primary policy, full learner library, diagnostics
-and **no** effect estimate), `expand` (the full delta ladder x {S1, S2} x
-{SDR, TMLE}).
 
 ### What the steps write
 
@@ -349,6 +511,52 @@ decide nothing themselves: a change to a lookback window or a summary rule is a
 protocol amendment made in that file, which bumps `definition_version`. Both steps
 carry a coverage assertion that fails loudly if a config key is declared but never
 consumed.
+
+### How step 02 enforces the measurement rules
+
+The rules themselves are defined once, in
+[Required CLIF tables and fields](#required-clif-tables-and-fields). This is only how
+step 02 holds itself to them.
+
+- **The `L_t -> A_t` ordering is asserted, not documented.** Every covariate window is
+  checked against the node schedule at import, before any data is read, and the
+  assertion has been seen to fire. The sibling repo's `04_build_causal_df.py` is the
+  cautionary case: it pairs a 0-24h mean dose with covariates measured at 24h.
+- **The node statistic is computed as `sum(dose_h) / n_charted_hours`** on an
+  hourly-bin reconstruction. Charted-zero versus uncharted-gap is genuinely ambiguous
+  in flowsheet data, so it is carried as a pre-specified bracket, S1 primary with S2
+  reported alongside, rather than settled by a single choice.
+
+### Vendored files
+
+`code/vendor/` holds two **config** files copied verbatim from
+`CLIF-epidemiology-of-CRRT` at the commit pinned in `vendor/VENDOR_SHA`, and they are
+never edited in place. `tests/test_vendor_integrity.py` asserts byte-equality against
+that pin. To take an upstream change: move the SHA, run `bash code/vendor/sync_vendor.sh`,
+run the tests, and commit all of it together.
+
+### The lockfile is checked, not assumed
+
+`code/check_r_deps.py` compares every `library()`, `require()` and `pkg::` in
+`code/*.R` against the `Packages` keys in `renv.lock` and exits non-zero on anything
+used but unrecorded. It reads no R and needs no installed library, because the bug it
+catches belongs to whoever wrote the lockfile.
+
+That bug was real and shipped. `03_lmtp_fit.R` has called `library(nanoparquet)` since
+the file was written, and nanoparquet appeared **zero** times in `renv.lock`; the
+coordinating machine ran only because the package happened to be installed there.
+Every clone would have died at that line, after step 01's full-table read and step 02's
+build.
+
+The check is one-directional on purpose. Used-but-not-locked is fatal;
+locked-but-not-used is ordinary transitive-dependency noise, and most of the entries
+are exactly that.
+
+Step 03 takes a stage argument: `smoke` (one cheap fit, SL.glm, folds = 2),
+`gate` (natural course plus the primary policy, full learner library, diagnostics
+and **no** effect estimate), `expand` (the full delta ladder x {S1, S2} x
+{SDR, TMLE}).
+
 
 ---
 
@@ -390,27 +598,25 @@ CRRT-dose-lmtp/
 │   ├── 01_build_cohort.py        Step 01
 │   ├── 02_build_lmtp_df.py       Step 02
 │   ├── 03_lmtp_fit.R             Step 03, gated stages
+│   ├── _site.py                  Resolves which site a run is for, and where it writes
 │   ├── check_r_deps.py           Asserts renv.lock records every package the R code loads
 │   ├── R_PACKAGES.md             R stack and the version landmine
-│   ├── README.md
 │   └── vendor/
 │       ├── VENDOR_SHA            Upstream pin and manifest (two config files)
 │       └── sync_vendor.sh        Pull manifest files at the pin
 │
 ├── config/
-│   ├── config_template.json      Copy to config.json
+│   ├── config_template.json      Copy to config.json (or config_<SITE>.json)
 │   ├── lmtp_design.json          The estimand. Treat as a protocol
 │   ├── clif_data_requirements.yaml
 │   └── outlier_config.json
 │
-├── output/
-│   ├── final_no_phi/             Shareable aggregates
-│   ├── intermediate_phi/         Patient-level, never shared
-│   └── logs/
+├── output/                       Gitignored. Created on first run, nested per site:
+│   └── <site_name>/                output/<site_name>/{final_no_phi,intermediate_phi,logs}/
 │
-├── references/                   Papers (gitignored; README tracked)
 └── tests/
     ├── test_r_deps.py            renv.lock completeness against code/*.R
+    ├── test_site_resolution.py   Site resolution, incl. the Python/R agreement check
     └── test_vendor_integrity.py  Byte-equality guard on the pinned config files
 ```
 
@@ -471,16 +677,40 @@ Raw CLIF tables contain protected patient data. They are never committed, never
 copied into this tree, and never read into an analysis transcript. Scripts print
 **aggregates only**, never rows.
 
-- `output/intermediate_phi/` is the PHI working space and is gitignored. It holds
-  one row per patient and never leaves the site.
-- `output/final_no_phi/` is aggregate by construction and is what the coordinating
-  center receives. PHI-check it before sending.
-- `config/config.json` is gitignored, since it carries your data path.
+- `output/<site>/intermediate_phi/` is the PHI working space and is gitignored. It
+  holds one row per patient and never leaves the site.
+- `output/<site>/final_no_phi/` is aggregate by construction and is what the
+  coordinating center receives. PHI-check it before sending.
+- `config/config.json` and `config/config_*.json` are gitignored, since they carry
+  your data paths.
+- On a machine holding more than one site's data, the per-site nesting is also a PHI
+  boundary: each site's patient-level artifacts stay in their own directory instead
+  of overwriting one another in a shared one.
 
 **Site anonymization.** Anything audience-facing (manuscripts, abstracts, posters,
 slides, public dashboards) refers to the *number* of participating sites and uses
 anonymized "Site 1, Site 2, …" labels for per-site figures. Author affiliations are
 the only place real institution names appear.
+
+---
+
+## References
+
+Papers the design decisions rest on. **The PDFs are not in this repository**: they are
+publisher copyright and this repo is public, so they are read locally and never
+redistributed. Obtain them from your institution's library.
+
+| Citation | DOI | What it decides here |
+|---|---|---|
+| Quickfall D, La A, Bell E, Pisano J, Costello P, Gunning S, Koyner JL. Variability in Antibiotic Dosing and Resistance Development during Continuous Renal Replacement Therapy in Critically Ill Patients. *Blood Purif* 2026;55:197-209. | `10.1159/000550381` | The node statistic. Delivered CRRT dose from hourly effluent flow rates averaged within patient; short interruptions such as filter changes retained as real delivered dose. See `exposure._node_statistic_why` in `config/lmtp_design.json` |
+| Diaz I, Williams N, Hoffman KL, Schenck EJ. Non-Parametric Causal Effects Based on Longitudinal Modified Treatment Policies. *JASA* 2023;118(542):846-857. | `10.1080/01621459.2021.1955691` | The estimand and the estimator. Vector-valued exposure with censoring intervened to 1, Assumption 1 positivity, and the SDR estimator |
+| Diaz I, Hoffman KL, Hejazi NS. Causal survival analysis under competing risks using longitudinal modified treatment policies. *Lifetime Data Anal* 2024;30:213-236. | `10.1007/s10985-023-09606-7` | The competing-event framing. Discharge alive as a competing event via `compete` |
+| Young JG, Stensrud MJ, Tchetgen Tchetgen EJ, Hernan MA. A causal framework for classical statistical estimands in failure-time settings with competing events. *Stat Med* 2020;39(8):1199-1236. | `10.1002/sim.8471` | Which competing-event estimand is being reported, and what it does and does not claim |
+| Williams N, Diaz I. `lmtp`: Non-Parametric Causal Effects of Feasible Interventions Based on Modified Treatment Policies. R package v1.5.4 (manual). | | Implementation mechanics: `cens` is mandatory for survival outcomes, `compete` applies only when `outcome_type = "survival"`, `mtp = TRUE` |
+
+The two competing-risks papers are distinct and the manuscript needs both: Diaz,
+Hoffman & Hejazi (2024) is the competing-risks method, while Diaz, Williams, Hoffman &
+Schenck (2023) is the vector-valued-exposure paper cited for the estimator.
 
 ---
 

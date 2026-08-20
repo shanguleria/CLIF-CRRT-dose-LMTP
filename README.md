@@ -3,22 +3,24 @@
 Longitudinal Modified Treatment Policies (LMTP) for time-varying continuous renal
 replacement therapy (CRRT) dose across the CLIF consortium.
 
-**CLIF Version:** 2.1.0
+**CLIF spec version:** 2.1.0 &nbsp;|&nbsp; **Definition version:** 0.2.0 (`config/lmtp_design.json`)
 
-> ### Status: the Python half runs. The fit does not exist yet.
+> ### Status: all three steps are built. One known blocker.
 >
-> `01_build_cohort.py` and `02_build_lmtp_df.py` are complete and run end to end,
-> from raw CLIF 2.1.0 tables to the wide analysis frame `lmtp` consumes.
-> `03_lmtp_fit.R` **does not exist yet** and no R packages are installed, so the
-> estimation step will not run. Sites can build the analysis frame and the
-> shareable diagnostics; they cannot yet fit anything.
+> `01_build_cohort.py`, `02_build_lmtp_df.py` and `03_lmtp_fit.R` all exist and
+> run; the R environment is installed and locked (`renv.lock`, 74 packages,
+> `lmtp` 1.5.4 on R 4.3.1), and `03`'s smoke stage passes.
+>
+> **Known blocker:** step 02 halts by design when a vasopressor cannot be unit
+> converted. See [Known issues](#known-issues) before running. The halt is
+> deliberate and dropping the rows is not a safe workaround.
 
 ---
 
 ## Objective
 
 Estimate the effect of **reducing delivered CRRT dose** on 30-day in-hospital
-mortality, treating dose as a **time-varying** exposure measured at 0, 24, and
+mortality, treating dose as a **time-varying** exposure measured at 0, 24 and
 48 hours after CRRT initiation, with time-varying confounders and discharge alive
 as a competing event.
 
@@ -32,28 +34,27 @@ d(a) = a - delta   if a - delta >= FLOOR
 ```
 
 The policy is evaluated over a ladder of delta = {2.5, 5, 10} mL/kg/hr with
-FLOOR = 15. The ladder is the dose-response result, so all three rungs are
-reported.
+FLOOR = 15 (primary delta = 5). The ladder **is** the dose-response result, so all
+three rungs are reported. The shift is self-limiting and is **never clamped**:
+clamping would break invertibility, and `lmtp` supplies no guard and will not warn.
 
 **Why this framing.** A prior point-treatment analysis (high vs low dose at
 30 mL/kg/hr) returned a null, and a time-varying marginal structural model was
 abandoned for positivity violations: 29.5% of patients had a propensity score
 above 0.95 at 12 hours, and truncation did not help. A feasibility audit across
 ten sites found that under the shift framing the binned density ratio never
-exceeds 6.0 anywhere at delta = 2.5. The gain is structural, not a matter of
-tuning. Full audit: `.claude/lmtp_feasibility_findings.md`.
+exceeds 6.0 at any site at delta = 2.5. The gain is structural, not a matter of
+tuning.
 
-Scope is **causal estimation only**. Descriptive epidemiology of this cohort
-lives in the sibling repository `CLIF-epidemiology-of-CRRT` and is not
-reproduced here.
+Scope is **causal estimation only**. Descriptive epidemiology of this cohort lives
+in the sibling repository `CLIF-epidemiology-of-CRRT` and is not reproduced here.
 
 ---
 
 ## Required CLIF tables and fields
 
-The cohort is built by code vendored from `CLIF-epidemiology-of-CRRT`, so the
-table requirements are identical to that project. The authoritative, complete
-specification is `config/clif_data_requirements.yaml`; this is the summary.
+The authoritative, complete specification is `config/clif_data_requirements.yaml`;
+this is the summary. All tables are CLIF **2.1.0**.
 
 ### Shared by every step
 
@@ -72,11 +73,15 @@ specification is `config/clif_data_requirements.yaml`; this is the summary.
 
 `has_crrt_settings: true` is **mandatory**. Dose cannot be computed from the
 minimal two-column CRRT table, and dose is the exposure, so a site without flow
-rates cannot participate.
+rates cannot participate. Both runners refuse to start without it.
 
 Effluent dose sums dialysate plus pre- and post-filter replacement for every
-dose-eligible mode, counting whichever are charted, divided by body weight.
-SCUF is excluded.
+dose-eligible mode, counting whichever are charted, divided by **actual** body
+weight. SCUF is excluded by definition rather than by name: it has neither
+dialysate nor replacement, so it can never satisfy the "delivering" test.
+
+The node statistic is a **time-weighted mean** over charted CRRT records in the
+24-hour window. Charted zeros enter; uncharted gaps are not imputed.
 
 ### Time-varying covariates at each node
 
@@ -88,35 +93,64 @@ SCUF is excluded.
 | **clif_respiratory_support** | `hospitalization_id`, `recorded_dttm`, `device_category`, `mode_category`, `fio2_set`, `peep_set` | IMV, NIPPV, High Flow NC, Nasal Cannula, Room Air |
 | **clif_microbiology_culture** | `hospitalization_id`, `collected_dttm`, `result_category` | *(optional)* sepsis flag; absent means the flag is NA and the pipeline continues |
 
-These feed SOFA-1 (Vincent 1996), P/F and S/F ratios, norepinephrine-equivalent,
-and IMV status computed **at each exposure node**, so that the `L_t -> A_t`
-ordering holds.
+These feed P/F (with S/F fallback and a source indicator), norepinephrine
+equivalent, inotrope status, lactate, potassium, pH, bicarbonate, BUN and IMV
+status, computed **at each exposure node**, so the `L_t -> A_t` ordering holds.
+That ordering is asserted at import against the node schedule, not left to a
+comment.
+
+**A stated limitation:** there is **no volume assessment**. Urine output and fluid
+balance were dropped rather than proxied, because no `intake_output` table exists
+in this CLIF version and `ultrafiltration_out` is unstable.
 
 ---
 
 ## Cohort identification
 
-Identical by design to the sibling CJASN analysis. The cohort code is vendored at
-a pinned commit rather than reimplemented, precisely so that two papers from the
-same consortium cannot report two different Ns.
-
 - **Population:** hospitalized adults receiving CRRT for acute kidney injury.
-- **Unit of analysis:** the **encounter block**, not the hospitalization. CRRT
-  initiation is the first `clif_crrt_therapy` record per encounter block.
-- **Time zero:** CRRT initiation. The 30-day outcome window is anchored there.
-- **Exclusions:** pre-existing ESRD, identified by ICD code.
-- **Not excluded:** short CRRT courses. The sibling analysis dropped courses
-  under 24 hours because a point-treatment design needs 24 hours to define the
-  exposure. LMTP handles early death structurally, so that exclusion is dropped
-  here and would now induce selection.
-- **Outcome:** 30-day in-hospital mortality, with discharge alive as a competing
-  event. In-hospital by construction: death is read from discharge disposition,
-  so post-discharge deaths are unobservable, and hospice discharge counts as a
-  death.
+- **Unit of analysis:** the **encounter block**, not the hospitalization.
+  Encounters are stitched first, then judged; blocks are the unit throughout.
+- **Time zero:** CRRT initiation, the first *delivering* `clif_crrt_therapy`
+  record per encounter block. The outcome window is anchored there.
+- **Exclusions:** pre-existing ESRD, by ICD code at block grain.
+- **Not excluded:** short CRRT courses. The sibling analysis dropped courses under
+  24 hours because a point-treatment design needs 24 hours to define the exposure.
+  LMTP handles early death structurally, so that exclusion is dropped here and
+  would now induce selection.
+- **Outcome:** 30-day in-hospital mortality, with **discharge alive** as a
+  competing event. In-hospital by construction: death is read from discharge
+  disposition, so post-discharge deaths are unobservable, and **hospice discharge
+  counts as a death**.
+- **Time grid:** one six-period axis, days `[1, 2, 3, 7, 14, 30]`. The policy
+  intervenes in periods 1-3 only (0/24/48h); periods 4-6 carry the outcome curve
+  to day 30 unintervened, at a density ratio of exactly 1.
+
+**The cohort is written here, not vendored.** An earlier plan copied
+`00_cohort.py` and four dependencies from `CLIF-epidemiology-of-CRRT`; that was
+abandoned on 2026-08-16 because the file is a converted notebook with no callable
+API, and because `clifpy` 0.4.9 already supplies `stitch_encounters`,
+`compute_sofa_polars`, `create_wide_dataset` and `apply_outlier_handling`.
+`code/vendor/` now pins **two config files and no code**.
+
+The consequence is worth stating plainly: because the cohort logic is
+reimplemented rather than copied, **matching the sibling analysis's N is a claim to
+be tested at each site, not a fact**. `config/lmtp_design.json` records the
+reconciliation under `cohort._must_reconcile`.
 
 ---
 
 ## Configuration
+
+Two files, and putting a value in the wrong one is a scientific error rather than
+a tidiness problem.
+
+| | File | Contains | Differs by site? |
+|---|---|---|---|
+| **Site** | `config/config.json` | `data_directory`, `filetype`, `timezone`, `site_name`, `has_crrt_settings`, `n_workers` | **Yes** |
+| **Protocol** | `config/lmtp_design.json` | delta ladder, floor, node schedule, study window, estimator, competing event, cohort rules | **No.** Identical everywhere |
+
+The test: *if two sites set this differently, is the pooled result still
+meaningful?* If no, it is protocol.
 
 Copy the template and edit it for your site:
 
@@ -127,39 +161,43 @@ cp config/config_template.json config/config.json
 ```json
 {
     "site_name": "Your_Site_Name",
+    "clif_version": "2.1.0",
     "data_directory": "/path/to/clif/tables/",
     "filetype": "parquet",
     "timezone": "America/Chicago",
     "project_root": "/path/to/CRRT-dose-lmtp",
     "output_dir": "output",
-    "has_crrt_settings": true
+    "has_crrt_settings": true,
+    "n_workers": 6
 }
 ```
 
-`data_directory`, `filetype`, and `timezone` are named to match what `clifpy`
+`data_directory`, `filetype` and `timezone` are named to match what `clifpy`
 expects, so one file serves both the library and this project's own code with no
-translation layer. The remaining keys are ours; clifpy ignores what it does not
-recognise. Note this differs from the sibling `CLIF-epidemiology-of-CRRT`, which
-calls the first two `tables_path` and `file_type`, so a config cannot be copied
-between the two repos unchanged.
+translation layer. Note this differs from the sibling `CLIF-epidemiology-of-CRRT`,
+which calls the first two `tables_path` and `file_type`, so a config **cannot** be
+copied between the two repos unchanged.
+
+`n_workers` is a **site** setting, not protocol: `lmtp` wraps each cross-fitting
+fold in `future(..., seed = TRUE)`, so results are identical under any worker
+count and only wall-clock changes. Set it to 1 to force sequential.
 
 `config/config.json` is gitignored and never leaves your site.
 
-`config/lmtp_design.json` holds the estimand itself: the delta ladder, the floor,
-the node schedule, the shift form, the estimator, and the competing-event
-handling. **Do not edit it to make a run work.** Changing a value there changes
-what is being estimated, and it is the `definition_version` stamped onto every
-shareable output.
+`config/lmtp_design.json` holds the estimand itself. **Do not edit it to make a run
+work.** Changing a value there changes what is being estimated, and it is the
+`definition_version` stamped onto every shareable output.
 
 ### Where outputs land
 
 | Path | Contents | Shareable |
 |---|---|---|
-| `output/final_no_phi/` | Aggregate estimates, diagnostics, figures, the federated export set | **Yes.** This is what the coordinating center receives |
+| `output/final_no_phi/` | Aggregate estimates, diagnostics, the federated export set | **Yes.** This is what the coordinating center receives |
 | `output/intermediate_phi/` | Patient-level node datasets, fitted objects | **No. Never leaves the site** |
+| `output/logs/` | Run and clifpy validation logs | Review before sharing |
 
-Nothing person-level is ever exported. The federated contract is per-site
-point estimates, the influence-function covariance matrix, n, learner
+Nothing person-level is ever exported. The federated contract is per-site point
+estimates, the T x T influence-function covariance matrix, n, learner
 coefficients, and diagnostics.
 
 ---
@@ -168,56 +206,82 @@ coefficients, and diagnostics.
 
 - **Python 3.11** (3.11.15 pinned via `.python-version`)
 - **[uv](https://docs.astral.sh/uv/)** package manager
-- **R 4.3+** with `renv`
-- Read access to your site's CLIF 2.1.0 tables
+- **R 4.3+** (developed and locked against 4.3.1) with `renv`
+- Read access to your site's CLIF 2.1.0 tables, named `clif_<table>.parquet`
 
 ```bash
-uv sync                 # creates .venv and installs the pinned stack
+uv sync                      # creates .venv and installs the pinned Python stack
+Rscript -e 'renv::restore()' # installs the pinned R stack from renv.lock
 ```
 
-The Python compute stack is pinned to exact versions for cross-site numeric
-reproducibility. `clifpy` especially: its minor releases have changed CLIF
-datetime timezone handling, which silently moves every windowed exposure node.
+The Python compute stack is pinned to **exact** versions for cross-site numeric
+reproducibility, notably [`clifpy`](https://pypi.org/project/clifpy/)`==0.4.9`:
+its minor releases have changed CLIF datetime timezone handling, which silently
+moves every windowed exposure node. Presentation libraries float. For sites
+without uv, `requirements.txt` carries the same pins.
 
-For sites without uv, `requirements.txt` carries the same pins.
-
-R packages are **not yet installed**. See `code/R_PACKAGES.md`, which records the
-required set and an R-version conflict to be aware of before installing.
+`renv.lock` pins **74** R packages including `lmtp` 1.5.4. This repo builds its own
+lock against R 4.3.1 and deliberately does **not** reuse the `fluid_ARDS` lock,
+which targets 4.5.2 and fails to restore here. CRAN's macOS binaries for R 4.3 are
+frozen at `lmtp` 1.5.2, so 1.5.4 installs from source; this works because `lmtp` is
+pure R. Detail and the version landmine: `code/R_PACKAGES.md`.
 
 ---
 
 ## Running the pipeline
 
-*(not built)* Neither runner script executes anything yet; both currently report
-which steps are missing and exit.
+The runner builds the analysis frame and runs the cheap smoke fit, then **stops**.
+
+Stopping is deliberate. `03_lmtp_fit.R` runs in gated stages, and stage 3 must not
+run until a human has read stage 2's diagnostics: once an effect estimate has been
+seen, every later decision about trimming or covariates is contaminated. A runner
+that drove all three stages end to end would defeat the gate.
 
 ### macOS / Linux
 
 ```bash
-bash run_pipeline.sh
+./run_pipeline.sh                      # 01 -> 02 -> 03 smoke, then stops
+Rscript code/03_lmtp_fit.R gate        # diagnostics ONLY, no effect estimate
+# ...read the diagnostics, then:
+Rscript code/03_lmtp_fit.R expand      # the full delta ladder
 ```
 
 ### Windows
 
 ```powershell
 .\run_pipeline.ps1
+Rscript code\03_lmtp_fit.R gate
+Rscript code\03_lmtp_fit.R expand
+# if execution policy blocks it:
+#   powershell -ExecutionPolicy Bypass -File .\run_pipeline.ps1
 ```
+
+**Exit codes:** `1` preflight or step failure, `2` a pipeline step is missing,
+`3` frame built but `Rscript` was not on PATH. A runner that exits 0 without doing
+anything is how a site ends up believing it has results.
+
+**Runtime.** The gate stage is roughly 2 hours and the full expand grid roughly
+6 hours at `folds = 10`, hardware dependent. Useful arithmetic for judging whether
+a long run is pathological or expected: one SuperLearner call on this design matrix
+is ~40 s at V=10, and one `lmtp` fit is `tau x folds x 2 = 120` such calls.
 
 ---
 
 ## Pipeline steps
 
-| Step | Language | Script | Status |
+| Step | Language | Script | Description |
 |---|---|---|---|
-| 01 | Python | `code/01_build_cohort.py` | **Runs.** Cohort identification, ESRD exclusion, CRRT initiation, dose series, outcomes |
-| 02 | Python | `code/02_build_lmtp_df.py` | **Runs.** Exposure and covariate nodes at 0/24/48h, `L_t -> A_t` ordering asserted |
-| 03 | R | `code/03_lmtp_fit.R` | *(not built)* `lmtp_sdr` fit over the delta ladder, influence-function exports |
+| 01 | Python | `code/01_build_cohort.py` | Cohort identification, ESRD exclusion, CRRT initiation, dose series, outcomes |
+| 02 | Python | `code/02_build_lmtp_df.py` | Exposure and covariate nodes at 0/24/48h; `L_t -> A_t` ordering asserted at import |
+| 03 | R | `code/03_lmtp_fit.R` | `lmtp_sdr` fit over the delta ladder, positivity diagnostics, influence-function exports |
 
-There is no step 00. An earlier plan vendored `00_cohort.py` and four dependencies
-from `CLIF-epidemiology-of-CRRT`; that was abandoned on 2026-08-16 because the file
-is a converted notebook with no callable API and because `clifpy` 0.4.9 already
-supplies `stitch_encounters`, `compute_sofa_polars`, `create_wide_dataset` and
-`apply_outlier_handling`. `code/vendor/` now pins two **config** files only.
+**There is no step 00.** See [Cohort identification](#cohort-identification) for why
+the vendoring plan was abandoned.
+
+Step 03 takes a stage argument: `smoke` (one cheap fit, SL.glm, folds = 2),
+`gate` (natural course plus the primary policy, full learner library, diagnostics
+and **no** effect estimate), `expand` (the full delta ladder x {S1, S2} x
+{SDR, TMLE}).
 
 ### What the steps write
 
@@ -225,10 +289,32 @@ supplies `stitch_encounters`, `compute_sofa_polars`, `create_wide_dataset` and
 |---|---|---|
 | 01 | `cohort.parquet`, `dose_series.parquet`, `block_map.parquet` | `<SITE>_strobe_counts.csv` |
 | 02 | `lmtp_df.parquet` (one row per encounter block) | `<SITE>_lmtp_df_diagnostics.csv` |
+| 03 | Fitted objects, per-observation influence functions | Estimates, diagnostics, the federated export set |
 
-Step 02 reads its every measurement rule from `config/lmtp_design.json` under
-`covariates`. It decides nothing itself: a change to a lookback window or a summary
-rule is a protocol amendment made in that file, which bumps `definition_version`.
+Steps 02 and 03 read every measurement rule from `config/lmtp_design.json`. They
+decide nothing themselves: a change to a lookback window or a summary rule is a
+protocol amendment made in that file, which bumps `definition_version`. Both steps
+carry a coverage assertion that fails loudly if a config key is declared but never
+consumed.
+
+---
+
+## Known issues
+
+**Step 02 halts on vasopressor unit conversion.** `clifpy` 0.4.9 leaves the **raw**
+value in `med_dose_converted` when it cannot convert a unit, and reports the failure
+only in `med_dose_unit_converted` — so a check for NA sees nothing. An angiotensin
+dose charted in ng/kg/min is then read as mcg/kg/min, and the x10 norepinephrine
+equivalent coefficient turns it into a 200-fold error.
+
+Step 02 therefore **raises** rather than continue. Dropping the unconvertible rows
+is not a safe workaround: it removes a drug from the norepinephrine equivalent for
+exactly the patients who received it, which is differential misclassification of a
+confounder in a known direction. Across sites it would also let each site compute a
+different NEE.
+
+If your site charts every vasopressor in a unit `clifpy` converts, you will not see
+this. Report it if you do; the fix belongs upstream.
 
 ---
 
@@ -236,26 +322,25 @@ rule is a protocol amendment made in that file, which bumps `definition_version`
 
 ```
 CRRT-dose-lmtp/
-├── CLAUDE.md                     Project guidance, inherited decisions
+├── CLAUDE.md                     Project guidance and inherited decisions
 ├── README.md
 ├── pyproject.toml                Pinned Python stack
 ├── requirements.txt              Same pins, for sites without uv
+├── uv.lock                       Resolved Python lockfile
 ├── .python-version               3.11.15
 ├── .Rprofile                     Activates renv
-├── renv/                         R environment (scaffolded, empty)
-├── run_pipeline.sh / .ps1        Runners (not yet functional)
-│
-├── .claude/
-│   ├── lmtp_feasibility_findings.md   The GO decision and its evidence
-│   ├── feasibility_results/           Aggregate audit CSVs, 10 sites
-│   ├── feasibility_code/              The three audit scripts
-│   ├── claude-todo.md                 Prioritized next steps
-│   └── claude-progress.md             Session log and decisions
+├── renv.lock                     74 R packages, lmtp 1.5.4 on R 4.3.1
+├── renv/                         R environment
+├── run_pipeline.sh / .ps1        Runners (macOS/Linux and Windows)
 │
 ├── code/
-│   ├── R_PACKAGES.md             R stack plan and version landmine
+│   ├── 01_build_cohort.py        Step 01
+│   ├── 02_build_lmtp_df.py       Step 02
+│   ├── 03_lmtp_fit.R             Step 03, gated stages
+│   ├── R_PACKAGES.md             R stack and the version landmine
+│   ├── README.md
 │   └── vendor/
-│       ├── VENDOR_SHA            Upstream pin and manifest
+│       ├── VENDOR_SHA            Upstream pin and manifest (two config files)
 │       └── sync_vendor.sh        Pull manifest files at the pin
 │
 ├── config/
@@ -266,19 +351,96 @@ CRRT-dose-lmtp/
 │
 ├── output/
 │   ├── final_no_phi/             Shareable aggregates
-│   └── intermediate_phi/         Patient-level, never shared
+│   ├── intermediate_phi/         Patient-level, never shared
+│   └── logs/
+│
+├── references/                   Papers (gitignored; README tracked)
 └── tests/
-    └── test_vendor_integrity.py  Byte-equality guard on vendored code
+    └── test_vendor_integrity.py  Byte-equality guard on the pinned config files
 ```
+
+Two directories exist in the coordinating site's working copy but are **gitignored
+and absent from a clone**: `.claude/` (internal planning and the feasibility audit,
+which names individual sites) and `docs/` (build walkthroughs written around one
+site's worked numbers). Nothing in the pipeline depends on either.
+
+---
+
+## Definitions & provenance
+
+If someone asks *"which code and which definitions produced this number?"*, the
+answer is auditable:
+
+- **`config/lmtp_design.json` carries a `definition_version`** (currently `0.2.0`)
+  and is the single source of truth for the estimand. It is machine-readable so it
+  is diffable and hashable, and any change to it is a protocol amendment that
+  leaves earlier results identifiable.
+- **Every shareable output carries a provenance block**: `site_id`,
+  `code_version` (git SHA), `clif_version`, `definition_version`, `generated`.
+- **Config coverage is asserted, not assumed.** Steps 02 and 03 fail loudly if a
+  key in `lmtp_design.json` is declared but never consumed, which is the failure
+  mode where a config reads as policy while changing nothing.
+- **Estimator:** `lmtp_sdr` primary, `lmtp_tmle` secondary. `lmtp_ipw()` and
+  `lmtp_sub()` are defunct in `lmtp` 1.5.x and raise errors, so the estimation
+  diagnostics are SDR-vs-TMLE agreement plus the density-ratio distribution and
+  trimmed fraction.
+
+---
+
+## Onboarding a new site
+
+```bash
+# 1. clone and install both stacks
+git clone https://github.com/shanguleria/CLIF-CRRT-dose-LMTP.git
+cd CLIF-CRRT-dose-LMTP
+uv sync
+Rscript -e 'renv::restore()'
+
+# 2. create your site config (lmtp_design.json stays shared and unchanged)
+cp config/config_template.json config/config.json
+#    set site_name, data_directory, timezone, clif_version, has_crrt_settings
+
+# 3. build the frame and run the smoke fit
+./run_pipeline.sh                       # Windows: .\run_pipeline.ps1
+
+# 4. read the diagnostics BEFORE any effect estimate
+Rscript code/03_lmtp_fit.R gate
+```
+
+**Before trusting any number, check three things.**
+
+1. **`has_crrt_settings` must be true.** Without flow rates there is no dose, and
+   dose is the exposure. Both runners refuse to start otherwise.
+2. **Vasopressor units.** See [Known issues](#known-issues). If step 02 raises on
+   unit conversion, that is the guard working, not a bug in your data.
+3. **`crrt_mode_category` is not trustworthy on its own.** At least one site
+   labels every sustained ultrafiltration-only course as `cvvhd`. This pipeline
+   does not branch on the mode label for dose eligibility, precisely for that
+   reason, but do not build a modality analysis on that column without checking.
+
+**Hard-failure gotchas.** `clifpy` needs files named `clif_<table>.parquet`. A
+different `clif_version` can shift column names. Flow-rate outlier bounds are
+applied once at load, so a site with wildly out-of-range charted flows will see
+records nulled rather than silently used.
 
 ---
 
 ## Data safety
 
 Raw CLIF tables contain protected patient data. They are never committed, never
-copied into this tree, and never read into an analysis transcript. Only
-aggregate outputs under `output/final_no_phi/` are shareable, and only
-`output/final_no_phi/` is assembled for transfer to the coordinating center.
+copied into this tree, and never read into an analysis transcript. Scripts print
+**aggregates only**, never rows.
+
+- `output/intermediate_phi/` is the PHI working space and is gitignored. It holds
+  one row per patient and never leaves the site.
+- `output/final_no_phi/` is aggregate by construction and is what the coordinating
+  center receives. PHI-check it before sending.
+- `config/config.json` is gitignored, since it carries your data path.
+
+**Site anonymization.** Anything audience-facing (manuscripts, abstracts, posters,
+slides, public dashboards) refers to the *number* of participating sites and uses
+anonymized "Site 1, Site 2, …" labels for per-site figures. Author affiliations are
+the only place real institution names appear.
 
 ---
 
@@ -286,6 +448,18 @@ aggregate outputs under `output/final_no_phi/` are shareable, and only
 
 | Repository | Relationship |
 |---|---|
-| `CLIF-epidemiology-of-CRRT` | Source of the vendored cohort code. Descriptive epidemiology and the point-treatment analysis |
-| `crrt-manuscript-tools` | Private coordinating-center tooling for the CJASN manuscript |
+| `CLIF-epidemiology-of-CRRT` | Descriptive epidemiology and the point-treatment analysis of the same cohort. Source of the two pinned config files |
 | `fluid_ARDS` | Methodological source of truth for LMTP. Inherited by reference, never copied |
+| `crrt-manuscript-tools` | Private coordinating-center tooling for the CJASN manuscript |
+
+---
+
+## Acknowledgements
+
+Built on the [Common Longitudinal ICU Format (CLIF)](https://clif-consortium.github.io/website/)
+and the [`clifpy`](https://pypi.org/project/clifpy/) library, with estimation by
+[`lmtp`](https://cran.r-project.org/package=lmtp) (Williams & Díaz).
+
+Method references: Díaz, Williams, Hoffman & Schenck, *Journal of the American
+Statistical Association* 2023 (modified treatment policies); Díaz, Hoffman &
+Hejazi, *Lifetime Data Analysis* 2024;30:213-236 (competing risks).

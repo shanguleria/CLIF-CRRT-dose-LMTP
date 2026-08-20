@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # CRRT-dose-lmtp pipeline runner (macOS / Linux).
 #
-# SCAFFOLD. No analysis step exists yet, so this script performs the preflight
-# checks and then reports exactly what is missing rather than pretending to run.
-# It exits non-zero while the pipeline is incomplete: a runner that exits 0
-# without doing anything is how a site ends up believing it has results.
+# Builds the analysis frame and runs the cheap smoke fit, then STOPS.
+#
+# Stopping is deliberate. 03_lmtp_fit.R runs in gated stages and stage 3 must not
+# run until a human has read stage 2's diagnostics: once an effect estimate has
+# been seen, every later decision about trimming or covariates is contaminated.
+# A runner that drove all three stages end to end would defeat the gate, so the
+# gate and expand stages are invoked by hand. This script prints the commands.
+#
+# Exits non-zero when it cannot complete: a runner that exits 0 without doing
+# anything is how a site ends up believing it has results.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -45,17 +51,17 @@ if [ "$HAS_SETTINGS" != "True" ]; then
 fi
 
 # --- Step inventory ----------------------------------------------------------
+# There is no step 00. The plan to vendor 00_cohort.py from
+# CLIF-epidemiology-of-CRRT was abandoned on 2026-08-16; code/vendor/ now pins two
+# config files and no code. See README, "Pipeline steps".
 PYTHON_STEPS=(
-    "code/vendor/00_cohort.py"
-    "code/vendor/01_create_wide_df.py"
+    "code/01_build_cohort.py"
     "code/02_build_lmtp_df.py"
 )
-R_STEPS=(
-    "code/03_lmtp_fit.R"
-)
+R_SCRIPT="code/03_lmtp_fit.R"
 
 MISSING=()
-for step in "${PYTHON_STEPS[@]}" "${R_STEPS[@]}"; do
+for step in "${PYTHON_STEPS[@]}" "$R_SCRIPT"; do
     [ -f "$SCRIPT_DIR/$step" ] || MISSING+=("$step")
 done
 
@@ -66,33 +72,57 @@ if [ ${#MISSING[@]} -gt 0 ]; then
     echo "Missing step(s):"
     for m in "${MISSING[@]}"; do echo "  - $m"; done
     echo
-    echo "Steps 00 and 01 are vendored, not written here:"
-    echo "  bash code/vendor/sync_vendor.sh"
-    echo "Steps 02 and 03 are not yet implemented. See .claude/claude-todo.md."
-    echo
     echo "Preflight itself passed: config is valid and the environment resolves."
     exit 2
 fi
 
-# --- Execution (reached only once every step exists) -------------------------
+# --- Execution ---------------------------------------------------------------
 START=$SECONDS
+
 for step in "${PYTHON_STEPS[@]}"; do
     echo ">>> $step"
     STEP_START=$SECONDS
-    uv run python "$SCRIPT_DIR/$step"
+    if ! uv run python "$SCRIPT_DIR/$step"; then
+        echo >&2
+        echo "--------------------------------------------------------------" >&2
+        echo " FAILED: $step" >&2
+        echo "--------------------------------------------------------------" >&2
+        if [ "$step" = "code/02_build_lmtp_df.py" ]; then
+            echo "If this failed on medication unit conversion, that is the KNOWN" >&2
+            echo "NEE blocker and the halt is deliberate, not a crash." >&2
+            echo "clifpy leaves the RAW value in med_dose_converted when it cannot" >&2
+            echo "convert, so an unconverted vasopressor silently inflates the" >&2
+            echo "norepinephrine equivalent. Step 02 raises rather than continue." >&2
+            echo "Dropping the rows is NOT a safe workaround: it removes a drug" >&2
+            echo "from NEE for exactly the patients who received it." >&2
+        fi
+        exit 1
+    fi
     echo "    done in $((SECONDS - STEP_START))s"
 done
 
-if command -v Rscript >/dev/null 2>&1; then
-    for step in "${R_STEPS[@]}"; do
-        echo ">>> $step"
-        STEP_START=$SECONDS
-        Rscript "$SCRIPT_DIR/$step"
-        echo "    done in $((SECONDS - STEP_START))s"
-    done
-else
-    echo "WARNING: Rscript not on PATH; R steps skipped." >&2
+if ! command -v Rscript >/dev/null 2>&1; then
+    echo >&2
+    echo "WARNING: Rscript not on PATH, so the smoke fit was skipped." >&2
+    echo "         The analysis frame was still built." >&2
+    echo "         Install R 4.3+ and run: Rscript $R_SCRIPT smoke" >&2
+    exit 3
 fi
 
-echo "Total: $(( (SECONDS - START) / 60 ))m $(( (SECONDS - START) % 60 ))s"
+echo ">>> $R_SCRIPT smoke"
+STEP_START=$SECONDS
+Rscript "$SCRIPT_DIR/$R_SCRIPT" smoke
+echo "    done in $((SECONDS - STEP_START))s"
+
+ELAPSED=$((SECONDS - START))
+echo
+echo "--------------------------------------------------------------"
+echo " Frame built and smoke fit passed in $((ELAPSED / 60))m $((ELAPSED % 60))s."
+echo "--------------------------------------------------------------"
+echo "The remaining stages are run by hand, on purpose:"
+echo
+echo "  Rscript $R_SCRIPT gate     # diagnostics ONLY, no effect estimate"
+echo "  # ...read the diagnostics, then:"
+echo "  Rscript $R_SCRIPT expand   # the full delta ladder"
+echo
 echo "Shareable outputs: output/final_no_phi/  (PHI-check before sending)"

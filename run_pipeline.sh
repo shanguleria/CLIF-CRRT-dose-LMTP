@@ -17,30 +17,77 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PYTHONIOENCODING=utf-8
 cd "$SCRIPT_DIR"
 
-CFG="${CLIF_CONFIG:-$SCRIPT_DIR/config/config.json}"
+# Which site. Precedence must match resolve_config() in code/_site.py and the
+# transcription in code/03_lmtp_fit.R:
+#
+#   1. positional arg   ./run_pipeline.sh SiteA  ->  config/config_SiteA.json
+#   2. $CLIF_CONFIG                           ->  that path
+#   3. default                                ->  config/config.json
+#
+# A single consortium site passes nothing and lands on (3), unchanged.
+#
+# THE ARGUMENT IS ALSO PASSED TO EVERY STEP. It did not used to be: this script
+# resolved CLIF_CONFIG for preflight while 01/02/03 each hardcoded config/config.json,
+# so `CLIF_CONFIG=config/config_SiteA.json ./run_pipeline.sh` printed "Site : SiteA", checked
+# SiteA's has_crrt_settings, and then ran the other site's config against the other site's
+# data, exiting 0. Preflight and execution must read the same file.
+SITE="${1:-}"
+SITE_ARGS=()
+SITE_SUFFIX=""
+if [ -n "$SITE" ]; then
+    CFG="$SCRIPT_DIR/config/config_${SITE}.json"
+    SITE_ARGS=(--site "$SITE")
+    SITE_SUFFIX=" --site $SITE"
+    CFG_HINT="cp config/config_template.json config/config_${SITE}.json"
+else
+    CFG="${CLIF_CONFIG:-$SCRIPT_DIR/config/config.json}"
+    CFG_HINT="cp config/config_template.json config/config.json"
+fi
 
 echo "=============================================================="
 echo " CRRT-dose-lmtp"
 echo "=============================================================="
 
 # --- Preflight ---------------------------------------------------------------
-if [ ! -f "$CFG" ]; then
-    echo "ERROR: config not found at $CFG" >&2
-    echo "       Fix: cp config/config_template.json config/config.json" >&2
-    echo "       then edit it for your site." >&2
-    exit 1
-fi
-
+# uv is checked FIRST because the missing-config branch below shells out to it.
 if ! command -v uv >/dev/null 2>&1; then
     echo "ERROR: uv is not installed. See https://docs.astral.sh/uv/" >&2
     exit 1
 fi
 
-SITE=$(uv run --quiet python -c "import json,sys;print(json.load(open(sys.argv[1]))['site_name'])" "$CFG")
+if [ ! -f "$CFG" ]; then
+    if [ -z "$SITE" ] && [ -z "${CLIF_CONFIG:-}" ]; then
+        # No default config. What to advise depends on whether this machine holds
+        # per-site configs, so ask _site.py rather than guessing here: it is the one
+        # place that knows how a per-site config is named.
+        uv run --quiet python "$SCRIPT_DIR/code/_site.py" \
+            --explain-missing "./run_pipeline.sh" >&2
+    else
+        echo "ERROR: config not found at $CFG" >&2
+        echo "       Fix: $CFG_HINT" >&2
+        echo "       then edit it for your site." >&2
+    fi
+    exit 1
+fi
+
+SITE_NAME=$(uv run --quiet python -c "import json,sys;print(json.load(open(sys.argv[1]))['site_name'])" "$CFG")
 HAS_SETTINGS=$(uv run --quiet python -c "import json,sys;print(json.load(open(sys.argv[1])).get('has_crrt_settings',False))" "$CFG")
 
-echo "Site   : $SITE"
+# The same equality check _site.py enforces, applied here so the run dies during
+# preflight rather than a table-read later. Filed-and-stamped under the wrong site is
+# the failure this whole path exists to prevent.
+if [ -n "$SITE" ] && [ "$SITE_NAME" != "$SITE" ]; then
+    echo "ERROR: site mismatch." >&2
+    echo "       You asked for '$SITE', which resolved to $(basename "$CFG")," >&2
+    echo "       but that file declares site_name = '$SITE_NAME'." >&2
+    echo "       Refusing to run: outputs would be filed and stamped under" >&2
+    echo "       '$SITE_NAME', not '$SITE'." >&2
+    exit 1
+fi
+
+echo "Site   : $SITE_NAME"
 echo "Config : $CFG"
+echo "Output : output/$SITE_NAME/"
 echo
 
 if [ "$HAS_SETTINGS" != "True" ]; then
@@ -92,7 +139,11 @@ START=$SECONDS
 for step in "${PYTHON_STEPS[@]}"; do
     echo ">>> $step"
     STEP_START=$SECONDS
-    if ! uv run python "$SCRIPT_DIR/$step"; then
+    # ${arr[@]+"${arr[@]}"} not "${arr[@]}": macOS ships bash 3.2, where expanding an
+    # empty array under `set -u` is an unbound-variable error. The empty case is the
+    # default single-site path, so the plain form would break exactly the users who
+    # pass no argument.
+    if ! uv run python "$SCRIPT_DIR/$step" ${SITE_ARGS[@]+"${SITE_ARGS[@]}"}; then
         echo >&2
         echo "--------------------------------------------------------------" >&2
         echo " FAILED: $step" >&2
@@ -115,13 +166,13 @@ if ! command -v Rscript >/dev/null 2>&1; then
     echo >&2
     echo "WARNING: Rscript not on PATH, so the smoke fit was skipped." >&2
     echo "         The analysis frame was still built." >&2
-    echo "         Install R 4.3+ and run: Rscript $R_SCRIPT smoke" >&2
+    echo "         Install R 4.3+ and run: Rscript $R_SCRIPT smoke$SITE_SUFFIX" >&2
     exit 3
 fi
 
 echo ">>> $R_SCRIPT smoke"
 STEP_START=$SECONDS
-Rscript "$SCRIPT_DIR/$R_SCRIPT" smoke
+Rscript "$SCRIPT_DIR/$R_SCRIPT" smoke ${SITE_ARGS[@]+"${SITE_ARGS[@]}"}
 echo "    done in $((SECONDS - STEP_START))s"
 
 ELAPSED=$((SECONDS - START))
@@ -131,8 +182,8 @@ echo " Frame built and smoke fit passed in $((ELAPSED / 60))m $((ELAPSED % 60))s
 echo "--------------------------------------------------------------"
 echo "The remaining stages are run by hand, on purpose:"
 echo
-echo "  Rscript $R_SCRIPT gate     # diagnostics ONLY, no effect estimate"
+echo "  Rscript $R_SCRIPT gate$SITE_SUFFIX     # diagnostics ONLY, no effect estimate"
 echo "  # ...read the diagnostics, then:"
-echo "  Rscript $R_SCRIPT expand   # the full delta ladder"
+echo "  Rscript $R_SCRIPT expand$SITE_SUFFIX   # the full delta ladder"
 echo
-echo "Shareable outputs: output/final_no_phi/  (PHI-check before sending)"
+echo "Shareable outputs: output/$SITE_NAME/final_no_phi/  (PHI-check before sending)"

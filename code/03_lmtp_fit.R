@@ -24,9 +24,12 @@
 #   Rscript code/03_lmtp_fit.R gate
 #   Rscript code/03_lmtp_fit.R expand
 #
+#   Add --site NAME to run a site other than the default config/config.json:
+#   Rscript code/03_lmtp_fit.R gate --site SiteA
+#
 # DATA SAFETY: reads patient-level data and produces fitted objects whose influence
-# functions are per-observation. Fits stay in output/intermediate_phi/. Only aggregates
-# reach output/final_no_phi/.
+# functions are per-observation. Fits stay in output/<site>/intermediate_phi/. Only
+# aggregates reach output/<site>/final_no_phi/.
 
 suppressPackageStartupMessages({
   library(lmtp)
@@ -75,7 +78,25 @@ say <- function(fmt, ...) {
   flush.console()
 }
 
-STAGE <- commandArgs(trailingOnly = TRUE)[1]
+# --site is pulled out BEFORE the positional stage is read, so `gate --site SiteA` and
+# `--site SiteA gate` both work and neither can be mistaken for a stage name.
+ARGV <- commandArgs(trailingOnly = TRUE)
+SITE <- NULL
+{
+  keep <- rep(TRUE, length(ARGV))
+  i <- 1
+  while (i <= length(ARGV)) {
+    if (ARGV[i] == "--site") {
+      if (i == length(ARGV)) stop("--site requires a site name, e.g. --site SiteA")
+      SITE <- ARGV[i + 1]; keep[c(i, i + 1)] <- FALSE; i <- i + 2
+    } else if (grepl("^--site=", ARGV[i])) {
+      SITE <- sub("^--site=", "", ARGV[i]); keep[i] <- FALSE; i <- i + 1
+    } else i <- i + 1
+  }
+  ARGV <- ARGV[keep]
+}
+
+STAGE <- ARGV[1]
 if (is.na(STAGE)) STAGE <- "smoke"
 stopifnot(STAGE %in% c("smoke", "gate", "expand"))
 
@@ -86,8 +107,64 @@ if (!dir.exists(file.path(REPO, "config"))) REPO <- normalizePath(".")
 # ---------------------------------------------------------------------------
 # CONFIG BLOCK  —  read, never decide
 # ---------------------------------------------------------------------------
-config <- fromJSON(file.path(REPO, "config", "config.json"))
+# THIS IS A TRANSCRIPTION of resolve_config() in code/_site.py, which R cannot import.
+# The two are a matched pair: precedence (--site, then $CLIF_CONFIG, then the default)
+# and the site_name equality check must stay identical in both, and
+# tests/test_site_resolution.py drives this script to assert that they do.
+# The equality check exists because a wrong-site run is silent: it writes a complete set
+# of plausible artifacts under someone else's name.
+SITE_NAME_RE <- "^[A-Za-z0-9_-]+$"
+CLIF_CONFIG_ENV <- Sys.getenv("CLIF_CONFIG", "")
+
+if (!is.null(SITE)) {
+  if (!grepl(SITE_NAME_RE, SITE))
+    stop(sprintf("invalid site name '%s': a site name becomes a directory under output/, so it is restricted to letters, digits, underscore and hyphen.", SITE))
+  CONFIG_PATH <- file.path(REPO, "config", sprintf("config_%s.json", SITE))
+} else if (nzchar(CLIF_CONFIG_ENV)) {
+  CONFIG_PATH <- if (grepl("^(/|[A-Za-z]:)", CLIF_CONFIG_ENV)) CLIF_CONFIG_ENV else
+    file.path(REPO, CLIF_CONFIG_ENV)
+} else {
+  CONFIG_PATH <- file.path(REPO, "config", "config.json")
+}
+
+if (!file.exists(CONFIG_PATH)) {
+  # Mirrors missing_default_message() in code/_site.py. Only the no-default case is
+  # site-aware: telling an operator who deliberately keeps no default to create one is
+  # advice against their own setup, so list the sites they actually have instead.
+  if (is.null(SITE) && !nzchar(CLIF_CONFIG_ENV)) {
+    avail <- sub("^config_", "", sub("\\.json$", "",
+      basename(list.files(file.path(REPO, "config"), pattern = "^config_.*\\.json$"))))
+    avail <- avail[avail != "template" & grepl(SITE_NAME_RE, avail)]
+    if (length(avail))
+      stop(sprintf(paste0("no default config at config/config.json\n",
+                          "  This machine has per-site configs. Name one:\n%s\n",
+                          "  (or create config/config.json for a single-site setup)"),
+                   paste(sprintf("    Rscript code/03_lmtp_fit.R %s --site %s", STAGE, avail),
+                         collapse = "\n")))
+  }
+  stop(sprintf("config not found at %s\n  Fix: cp config/config_template.json config/%s, then edit it.",
+               CONFIG_PATH, basename(CONFIG_PATH)))
+}
+
+config <- fromJSON(CONFIG_PATH)
 design <- fromJSON(file.path(REPO, "config", "lmtp_design.json"), simplifyVector = TRUE)
+
+if (is.null(config$site_name))
+  stop(sprintf("%s has no 'site_name'. Every output is stamped and filed under it.",
+               CONFIG_PATH))
+if (!grepl(SITE_NAME_RE, config$site_name))
+  stop(sprintf("invalid site_name '%s' in %s.", config$site_name, basename(CONFIG_PATH)))
+if (!is.null(SITE) && !identical(config$site_name, SITE))
+  stop(sprintf(paste0("site mismatch.\n",
+                      "  You asked for --site %s, which resolved to %s,\n",
+                      "  but that file declares site_name = '%s'.\n",
+                      "  Refusing to run: outputs would be filed and stamped under '%s', not '%s'."),
+               SITE, basename(CONFIG_PATH), config$site_name, config$site_name, SITE))
+
+# Everything this run may read or write. Matches site_output_root() in code/_site.py.
+SITE_OUT  <- file.path(REPO, "output", config$site_name)
+PHI_DIR   <- file.path(SITE_OUT, "intermediate_phi")
+SHARE_DIR <- file.path(SITE_OUT, "final_no_phi")
 
 EST      <- design$estimation
 POL      <- design$policy
@@ -114,6 +191,9 @@ if (N_WORKERS > 1) {
   plan(sequential)
 }
 
+cat(sprintf("site:   %s\n", config$site_name))
+cat(sprintf("config: %s\n", CONFIG_PATH))
+cat(sprintf("output: %s\n", SITE_OUT))
 cat(sprintf("stage: %s\n", STAGE))
 cat(sprintf("parallel: %s over %d worker(s) of %d cores\n",
             class(plan())[1], N_WORKERS, future::availableCores()))
@@ -138,7 +218,10 @@ EXPO_COLS_S2 <- A_S2[EXPO_PERIODS]
 # Stage 0: load and assert
 # ---------------------------------------------------------------------------
 stage_0_load <- function() {
-  f <- file.path(REPO, "output", "intermediate_phi", "lmtp_df.parquet")
+  f <- file.path(PHI_DIR, "lmtp_df.parquet")
+  if (!file.exists(f))
+    stop(sprintf("no analysis frame for site '%s' at %s\n  Run step 02 for this site first: uv run python code/02_build_lmtp_df.py --site %s",
+                 config$site_name, f, config$site_name))
   d <- as.data.frame(read_parquet(f))
   cat(sprintf("\n  frame: %s rows x %d cols\n", format(nrow(d), big.mark = ","), ncol(d)))
 
@@ -443,7 +526,7 @@ write_shareable <- function(df, name) {
   leaked <- names(df)[sapply(names(df), function(n) any(sapply(ID_LIKE, grepl, x = n)))]
   if (length(leaked)) stop("identifier-like columns in a shareable file: ",
                            paste(leaked, collapse = ", "))
-  share <- file.path(REPO, "output", "final_no_phi")
+  share <- SHARE_DIR
   dir.create(share, showWarnings = FALSE, recursive = TRUE)
   path <- file.path(share, sprintf("%s_%s.csv", config$site_name, name))
   write.csv(df, path, row.names = FALSE)
@@ -451,7 +534,7 @@ write_shareable <- function(df, name) {
 }
 
 save_fits <- function(obj, name) {
-  phi <- file.path(REPO, "output", "intermediate_phi")
+  phi <- PHI_DIR
   dir.create(phi, showWarnings = FALSE, recursive = TRUE)
   saveRDS(obj, file.path(phi, sprintf("%s.rds", name)))
   cat(sprintf("  wrote intermediate_phi/%s.rds  (per-observation EIFs: never share)\n", name))

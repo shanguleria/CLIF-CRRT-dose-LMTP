@@ -4,8 +4,6 @@
     "data_directory": "/path/to/clif/tables/",
     "filetype": "parquet",
     "timezone": "America/Chicago",
-    "project_root": "/path/to/CRRT-dose-lmtp",
-    "output_dir": "output",
     "has_crrt_settings": true,
     "n_workers": 6,
     "_n_workers_note": "Parallel workers for the R fit. A SITE setting, not protocol: lmtp wraps each cross-fitting fold in future(..., seed = TRUE), so results are identical under any worker count given the same seed. Only wall-clock changes. Set to 1 to force sequential."

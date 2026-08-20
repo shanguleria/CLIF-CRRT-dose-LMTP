@@ -15,9 +15,13 @@ ordering requires them measured at each node rather than once at baseline.
 Built stage by stage. The walkthrough is docs/clif_cohort_tutorial.md, which is
 local and gitignored: it carries coordinating-site numbers and does not ship.
 
+Usage:
+  uv run python code/01_build_cohort.py              # config/config.json
+  uv run python code/01_build_cohort.py --site SiteA    # config/config_SiteA.json
+
 DATA SAFETY: this script reads protected patient data. Print aggregates only,
-never rows. Outputs split into output/intermediate_phi/ (patient-level, stays at
-the site) and output/final_no_phi/ (aggregate, shareable).
+never rows. Outputs split into output/<site>/intermediate_phi/ (patient-level, stays
+at the site) and output/<site>/final_no_phi/ (aggregate, shareable).
 """
 # %%
 # ---------------------------------------------------------------------------
@@ -26,6 +30,7 @@ the site) and output/final_no_phi/ (aggregate, shareable).
 from __future__ import annotations
 import json
 import subprocess
+import sys
 from datetime import datetime, timezone as _tz
 from pathlib import Path
 
@@ -37,13 +42,29 @@ try:
 except NameError:               # no __file__ in an interactive session
     REPO_ROOT = Path.cwd()
 
+# Running this file as a script already puts code/ on sys.path; running its cells
+# interactively from the repo root does not, and this file is written to support both.
+if str(REPO_ROOT / "code") not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / "code"))
+import _site                                                            # noqa: E402
+
 # %%
 # ---------------------------------------------------------------------------
 # CONFIG BLOCK
 # ---------------------------------------------------------------------------
 
-config = json.loads((REPO_ROOT / "config" / "config.json").read_text())
+# Which site, resolved once, in one place. See code/_site.py for the precedence rule
+# and for why the site_name equality check is not optional.
+CONFIG_PATH, config = _site.resolve_config(REPO_ROOT, sys.argv[1:])
 design = json.loads((REPO_ROOT / "config" / "lmtp_design.json").read_text())
+
+# Everything this run may write. Nested per site so that running a second site cannot
+# overwrite the first: these artifacts carry no site in their filenames, so before the
+# nesting existed a second run silently replaced the first one's cohort in place.
+SITE_OUT = _site.site_output_root(REPO_ROOT, config)
+print(f"site:   {config['site_name']}")
+print(f"config: {CONFIG_PATH}")
+print(f"output: {SITE_OUT}")
 
 STUDY_YEAR_START = design["cohort"]["study_year_start"]
 STUDY_YEAR_END = design["cohort"]["study_year_end"]
@@ -61,7 +82,10 @@ _kw = dict(
     data_directory=config["data_directory"],
     filetype=config["filetype"],
     timezone=config["timezone"],
-    output_directory=str(REPO_ROOT / "output"),
+    # Site-nested: clifpy writes validation logs to output_directory/logs
+    # (clifpy/tables/base_table.py:91,121), so pointing it at the shared output/ would
+    # interleave two sites' logs in one directory.
+    output_directory=str(SITE_OUT),
 )
 
 outliers = json.loads((REPO_ROOT / "config" / "outlier_config.json").read_text())
@@ -702,12 +726,15 @@ def _code_version(repo_root):
         return "unknown"
 
 
-def stage_8_write(cohort, dose_series, mapping, strobes, config, design, repo_root):
+def stage_8_write(cohort, dose_series, mapping, strobes, config, design, repo_root, site_out):
     """Write patient-level artifacts and the shareable STROBE count table.
 
     Computes nothing. The work is splitting outputs by whether they can leave the
     site, and stamping the shareable one with enough provenance to trace it back to
     the code and the estimand that produced it.
+
+    Takes both roots because they are different things: `site_out` is where this site's
+    artifacts go, `repo_root` is what `git describe` must be run against for provenance.
     """
     print(f"  stage 8 input: {len(cohort):,} blocks, {len(dose_series):,} dose records")
 
@@ -724,10 +751,7 @@ def stage_8_write(cohort, dose_series, mapping, strobes, config, design, repo_ro
     for k, v in prov.items():
         print(f"    {k:<20} {v}")
 
-    phi = repo_root / "output" / "intermediate_phi"
-    share = repo_root / "output" / "final_no_phi"
-    phi.mkdir(parents=True, exist_ok=True)
-    share.mkdir(parents=True, exist_ok=True)
+    phi, share = _site.ensure_site_dirs(site_out)
 
     # Sorted before writing so a re-run is byte-comparable. Row order out of a
     # groupby is not guaranteed stable across pandas versions, and an artifact
@@ -780,7 +804,8 @@ def stage_8_write(cohort, dose_series, mapping, strobes, config, design, repo_ro
 
 strobes = [(1, strobe_1), (2, strobe_2), (3, strobe_3), (4, strobe_4),
            (5, strobe_5), (6, strobe_6), (7, strobe_7)]
-cohort_prov = stage_8_write(cohort, dose_series, mapping, strobes, config, design, REPO_ROOT)
+cohort_prov = stage_8_write(cohort, dose_series, mapping, strobes, config, design,
+                            REPO_ROOT, SITE_OUT)
 
 
 # %%

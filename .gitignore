@@ -47,13 +47,14 @@ CLIF_*.fst
 *.RData
 
 # --- Outputs -----------------------------------------------------------------
-# Ignore output contents, keep the READMEs that explain the layout.
-output/**
-!output/README.md
-!output/final_no_phi/
-!output/final_no_phi/README.md
-!output/intermediate_phi/
-!output/intermediate_phi/README.md
+# Nothing here is tracked, not even a placeholder.
+#
+# Outputs are nested per site: output/<site_name>/{final_no_phi,intermediate_phi,logs}/.
+# Every one of those directories is created at runtime from config.site_name by
+# _site.ensure_site_dirs(), which also writes the "never leaves the site" warning label
+# into each intermediate_phi/. So output/ is absent from a fresh clone and appears on
+# the first run. The layout is documented in README.md, "Where outputs land".
+output/
 
 # --- Python ------------------------------------------------------------------
 .venv/
@@ -100,7 +101,7 @@ Rplots.pdf
 
 # --- Reference papers: read locally, never redistributed ----------------------
 # Publisher PDFs are copyrighted (Karger, Wiley, Elsevier, ...). This repo is
-# public, so committing one would be redistribution. Ignore the PDFs, track the
-# README that cites them so a site knows what to obtain and why.
-references/*
-!references/README.md
+# public, so committing one would be redistribution. The directory is not tracked at
+# all; make it locally if you want somewhere to keep them. What to obtain and why is
+# in README.md, "References".
+references/

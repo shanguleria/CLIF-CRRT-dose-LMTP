@@ -24,9 +24,13 @@ mean dose with covariates measured at 24h.
 The walkthrough is docs/lmtp_df_build_notes.md, which is local and gitignored: it
 carries coordinating-site numbers and does not ship.
 
+Usage:
+  uv run python code/02_build_lmtp_df.py              # config/config.json
+  uv run python code/02_build_lmtp_df.py --site SiteA    # config/config_SiteA.json
+
 DATA SAFETY: this script reads protected patient data. Print aggregates only, never
-rows. Outputs split into output/intermediate_phi/ (patient-level, stays at the site)
-and output/final_no_phi/ (aggregate, shareable).
+rows. Outputs split into output/<site>/intermediate_phi/ (patient-level, stays at the
+site) and output/<site>/final_no_phi/ (aggregate, shareable).
 """
 # %%
 # ---------------------------------------------------------------------------
@@ -35,6 +39,7 @@ and output/final_no_phi/ (aggregate, shareable).
 from __future__ import annotations
 import json
 import subprocess
+import sys
 from datetime import datetime, timezone as _tz
 from pathlib import Path
 
@@ -53,13 +58,27 @@ try:
 except NameError:               # no __file__ in an interactive session
     REPO_ROOT = Path.cwd()
 
+# Running this file as a script already puts code/ on sys.path; running its cells
+# interactively from the repo root does not, and this file is written to support both.
+if str(REPO_ROOT / "code") not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / "code"))
+import _site                                                            # noqa: E402
+
 # %%
 # ---------------------------------------------------------------------------
 # CONFIG BLOCK  —  everything below is READ, nothing is decided here
 # ---------------------------------------------------------------------------
 
-config = json.loads((REPO_ROOT / "config" / "config.json").read_text())
+# Which site, resolved once, in one place. See code/_site.py. This MUST resolve to the
+# same site 01 ran as: stage 0 below reads 01's parquets out of this site's directory,
+# so a mismatch is now a missing-file error instead of a silent cross-site join.
+CONFIG_PATH, config = _site.resolve_config(REPO_ROOT, sys.argv[1:])
 design = json.loads((REPO_ROOT / "config" / "lmtp_design.json").read_text())
+
+SITE_OUT = _site.site_output_root(REPO_ROOT, config)
+print(f"site:   {config['site_name']}")
+print(f"config: {CONFIG_PATH}")
+print(f"output: {SITE_OUT}")
 
 COV = design["covariates"]
 DEFS = COV["definitions"]
@@ -128,7 +147,10 @@ _kw = dict(
     data_directory=config["data_directory"],
     filetype=config["filetype"],
     timezone=config["timezone"],
-    output_directory=str(REPO_ROOT / "output"),
+    # Site-nested: clifpy writes validation logs to output_directory/logs
+    # (clifpy/tables/base_table.py:91,121), so pointing it at the shared output/ would
+    # interleave two sites' logs in one directory.
+    output_directory=str(SITE_OUT),
 )
 
 # Covariate outlier bounds come from clifpy's own shipped config, NOT from the
@@ -228,8 +250,8 @@ def _apply_bounds(df, value_col, table, category, label=None):
 # ---------------------------------------------------------------------------
 # Stage 0: Load 01's artifacts
 # ---------------------------------------------------------------------------
-def stage_0_load(repo_root):
-    """Read the cohort, dose series, and block map written by 01.
+def stage_0_load(site_out):
+    """Read the cohort, dose series, and block map written by 01 FOR THIS SITE.
 
     The block map is why 01 persists it: every raw CLIF table is keyed on
     hospitalization_id, and nothing downstream of 01 carries one. Re-deriving it
@@ -237,7 +259,7 @@ def stage_0_load(repo_root):
     which hospitalizations belong to which block, and two scripts that disagree
     about that disagree about the cohort.
     """
-    phi = repo_root / "output" / "intermediate_phi"
+    phi = Path(site_out) / "intermediate_phi"
     cohort = pd.read_parquet(phi / "cohort.parquet")
     dose_series = pd.read_parquet(phi / "dose_series.parquet")
     block_map = pd.read_parquet(phi / "block_map.parquet")
@@ -254,7 +276,7 @@ def stage_0_load(repo_root):
 
 
 # %%
-cohort, dose_series, block_map = stage_0_load(REPO_ROOT)
+cohort, dose_series, block_map = stage_0_load(SITE_OUT)
 
 # t0 per block, and the hospitalization-level key both carrying it.
 t0 = cohort[["encounter_block", "crrt_initiation_dttm", "weight_kg"]].copy()
@@ -1165,8 +1187,11 @@ def _code_version(repo_root):
         return "unknown"
 
 
-def stage_8_write(lmtp_df, exposure, missingness, config, design, repo_root):
+def stage_8_write(lmtp_df, exposure, missingness, config, design, repo_root, site_out):
     """Write the analysis frame and the shareable diagnostics.
+
+    Takes both roots because they are different things: `site_out` is where this site's
+    artifacts go, `repo_root` is what `git describe` must be run against for provenance.
 
     The diagnostics file carries what a coordinating centre needs to see per site
     BEFORE pooling: node availability, how much of each node was actually charted,
@@ -1184,10 +1209,7 @@ def stage_8_write(lmtp_df, exposure, missingness, config, design, repo_root):
     for k, v in prov.items():
         print(f"    {k:<20} {v}")
 
-    phi = repo_root / "output" / "intermediate_phi"
-    share = repo_root / "output" / "final_no_phi"
-    phi.mkdir(parents=True, exist_ok=True)
-    share.mkdir(parents=True, exist_ok=True)
+    phi, share = _site.ensure_site_dirs(site_out)
 
     out = lmtp_df.sort_values("encounter_block").reset_index(drop=True)
     out.to_parquet(phi / "lmtp_df.parquet", index=False)
@@ -1238,5 +1260,5 @@ def stage_8_write(lmtp_df, exposure, missingness, config, design, repo_root):
 
 
 # %%
-prov = stage_8_write(lmtp_df, exposure, missingness, config, design, REPO_ROOT)
+prov = stage_8_write(lmtp_df, exposure, missingness, config, design, REPO_ROOT, SITE_OUT)
 print(f"\nlmtp_df: {len(lmtp_df):,} rows x {lmtp_df.shape[1]} columns")

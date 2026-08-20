@@ -27,15 +27,15 @@ tables to written artifacts:
 ```
 
 It writes `cohort.parquet`, `dose_series.parquet` and `block_map.parquet` to
-`output/intermediate_phi/`, and a provenance-stamped STROBE table to
-`output/final_no_phi/`.
+`output/<site>/intermediate_phi/`, and a provenance-stamped STROBE table to
+`output/<site>/final_no_phi/`.
 
 `code/02_build_lmtp_df.py` is complete, but **currently halts at this site by
 design** (see the blocker below). When it runs it produces
-`output/intermediate_phi/lmtp_df.parquet` (2,144 x 180, one row per encounter block:
+`output/<site>/intermediate_phi/lmtp_df.parquet` (2,144 x 180, one row per encounter block:
 S1 and S2 exposure at three nodes, baseline and time-varying covariates, and
 outcome / competing / censoring indicators on the merged six-period grid) plus
-`output/final_no_phi/<SITE>_lmtp_df_diagnostics.csv`. Its build walkthrough is
+`output/<site>/final_no_phi/<SITE>_lmtp_df_diagnostics.csv`. Its build walkthrough is
 `docs/lmtp_df_build_notes.md`.
 
 The `lmtp_df.parquet` on disk is the **previous, NEE-contaminated** build. 02 aborts
@@ -187,7 +187,7 @@ the wrong place is a scientific error rather than a tidiness problem.
 
 | | File | Contains | Differs by site? |
 |---|---|---|---|
-| **Site** | `config/config.json` | `data_directory`, `filetype`, `timezone`, `site_name`, `has_crrt_settings` | **Yes** |
+| **Site** | `config/config.json`, or `config/config_<SITE>.json` | `data_directory`, `filetype`, `timezone`, `site_name`, `has_crrt_settings`, `n_workers` | **Yes** |
 | **Protocol** | `config/lmtp_design.json` | delta ladder, floor, node schedule, study window, estimator, competing event, cohort rules | **No.** Identical everywhere |
 
 The test: **if two sites set this differently, is the pooled result still
@@ -234,8 +234,25 @@ written after that date exists only on this machine.
   `code/R_PACKAGES.md`.
 - `has_crrt_settings: true` is **required**; vendored `00_cohort.py` needs flow
   rates and mode columns to compute dose at all.
-- Outputs split into `output/final_no_phi/` (aggregate, shareable) and
-  `output/intermediate_phi/` (patient-level, never leaves the site).
+- Outputs are nested per site: `output/<site_name>/final_no_phi/` (aggregate,
+  shareable), `output/<site_name>/intermediate_phi/` (patient-level, never leaves
+  the site) and `output/<site_name>/logs/`. The nesting is unconditional, so a site
+  running alone still writes to `output/<its own name>/...`.
+- **Which site a run belongs to is resolved in ONE place**, `code/_site.py`:
+  `--site NAME` -> `config/config_<NAME>.json`, else `$CLIF_CONFIG`, else
+  `config/config.json`. `03_lmtp_fit.R` carries an R transcription because R cannot
+  import it; `tests/test_site_resolution.py` drives the R script to assert the two
+  agree. `--site NAME` hard-fails unless the config's `site_name` equals `NAME`.
+  This exists because the previous arrangement was actively wrong, not merely
+  missing: the runner resolved `CLIF_CONFIG` for preflight while all three steps
+  hardcoded `config/config.json`, so a run could report one site and analyse
+  another, exiting 0 with a complete set of plausible artifacts.
+- **A machine holding several sites should have NO `config/config.json`.** The
+  fallback stays in the code because the repo ships to single-site consortium
+  members, but the *file* is an unlabeled default: with it present, a forgotten
+  `--site` runs whichever site it describes rather than stopping. Absent, every
+  entry point exits 1 and lists the sites that do have configs. The coordinating
+  machine therefore keeps only `config/config_<SITE>.json`.
 
 ## Data safety
 

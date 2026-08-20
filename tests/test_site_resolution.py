@@ -53,6 +53,32 @@ def _renv_libpaths() -> str:
     return proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
 
 
+@functools.lru_cache(maxsize=1)
+def _r_stack_available() -> bool:
+    """Can 03 actually load its libraries here?
+
+    renv/library is gitignored, so a fresh clone has R on PATH but an empty pinned
+    library until `renv::restore()` runs. Without this the two R tests below would fail
+    rather than skip on every clone, which trains people to ignore a red suite. Checked
+    by loading the package, not by looking for a directory: an empty renv/library exists
+    in a clone and would pass a path check while failing every library() call.
+    """
+    if shutil.which("Rscript") is None:
+        return False
+    proc = subprocess.run(
+        ["Rscript", "-e", "suppressPackageStartupMessages(library(lmtp))"],
+        capture_output=True, text=True, timeout=180, cwd=REPO_ROOT,
+        env={**os.environ, "R_LIBS": _renv_libpaths()},
+    )
+    return proc.returncode == 0
+
+
+requires_r = pytest.mark.skipif(
+    not _r_stack_available(),
+    reason="pinned R library not restored here; run Rscript -e 'renv::restore()'",
+)
+
+
 def make_r_repo(tmp_path: Path, config_filename: str, site_name: str) -> Path:
     """A throwaway repo holding a real copy of 03, so it resolves REPO to here.
 
@@ -431,7 +457,7 @@ def test_site_cli_rejects_an_unknown_flag() -> None:
 # The Python rule and the R transcription must agree
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skipif(shutil.which("Rscript") is None, reason="Rscript not on PATH")
+@requires_r
 def test_r_and_python_resolvers_agree(tmp_path: Path) -> None:
     """Drive the real R script and compare the site it resolves to.
 
@@ -452,7 +478,7 @@ def test_r_and_python_resolvers_agree(tmp_path: Path) -> None:
         f"R output root disagrees with _site.site_output_root ({expected_out}):\n{out[:2000]}")
 
 
-@pytest.mark.skipif(shutil.which("Rscript") is None, reason="Rscript not on PATH")
+@requires_r
 def test_r_rejects_site_name_mismatch(tmp_path: Path) -> None:
     """The R half of the guard must be red too, or the pair is only half enforced."""
     repo = make_r_repo(tmp_path, "config_SiteA.json", "SiteB")   # the mistake

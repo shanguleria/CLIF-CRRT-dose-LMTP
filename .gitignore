@@ -6,22 +6,28 @@
 # This repo is PUBLIC, because it ships to consortium sites. That decides what
 # belongs in git:
 #
-#   .claude/   IGNORED, and a symlink to ../crrt-manuscript-tools/lmtp-claude.
+#   .claude/   IGNORED. An ordinary local directory, tracked in no repository.
 #              It holds the LMTP feasibility audit, which names ten sites with
 #              their dose distributions, coverage and positivity-exclusion status,
-#              plus internal deliberations. None of that can be public. The
-#              private repo is the backed-up copy of record; this is only a view
-#              of it so Claude Code can read it locally.
+#              plus internal deliberations. None of that can be public.
 #   CLAUDE.md  TRACKED. Deliberately written with no site named: it says "the
 #              coordinating site" and "one participating institution" throughout.
 #              It is useful to anyone working on this code, so it ships.
-#   docs/      IGNORED, and a symlink to ../crrt-manuscript-tools/lmtp-docs.
+#   docs/      IGNORED. Also an ordinary local directory, tracked nowhere.
 #              The cohort tutorial is built around worked numbers from the
 #              coordinating site: its cohort counts, its mortality rate, and a
 #              detailed account of its EHR charting defects.
-#              Naming only UCMC was the wrong test; the content is the issue.
+#              Naming only one site was the wrong test; the content is the issue.
 #              A site-facing METHODS.md without site-specific numbers should
 #              replace it here.
+#
+# WARNING: because those two directories are ignored and untracked, `git clean
+# -fdx` DELETES THEM SILENTLY and git will not warn you. Until 2026-08-20 they
+# were symlinks into the private crrt-manuscript-tools repo, which made that repo
+# the backup; that split one project across two repositories, so the files were
+# moved here and the copies there deleted. The 2026-08-20 snapshot is still
+# recoverable from crrt-manuscript-tools history. Anything written after that date
+# exists only on this machine.
 #
 # Before adding a tracked file, ask whether it carries any site's numbers, not
 # just whether it names a site.
@@ -71,7 +77,7 @@ renv/sandbox/
 .Rproj.user/
 *.Rproj
 
-# --- Internal planning and docs: symlinked to the private repo, never tracked --
+# --- Internal planning and docs: local directories, never tracked ------------
 .claude
 .claude/
 docs

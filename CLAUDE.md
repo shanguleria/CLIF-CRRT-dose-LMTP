@@ -30,12 +30,16 @@ It writes `cohort.parquet`, `dose_series.parquet` and `block_map.parquet` to
 `output/intermediate_phi/`, and a provenance-stamped STROBE table to
 `output/final_no_phi/`.
 
-`code/02_build_lmtp_df.py` is **also complete and runs**, producing
-`output/intermediate_phi/lmtp_df.parquet` (2,144 x 162, one row per encounter block:
+`code/02_build_lmtp_df.py` is complete, but **currently halts at this site by
+design** (see the blocker below). When it runs it produces
+`output/intermediate_phi/lmtp_df.parquet` (2,144 x 180, one row per encounter block:
 S1 and S2 exposure at three nodes, baseline and time-varying covariates, and
-outcome / competing / censoring indicators on the day 3/7/14/30 grid) plus
+outcome / competing / censoring indicators on the merged six-period grid) plus
 `output/final_no_phi/<SITE>_lmtp_df_diagnostics.csv`. Its build walkthrough is
 `docs/lmtp_df_build_notes.md`.
+
+The `lmtp_df.parquet` on disk is the **previous, NEE-contaminated** build. 02 aborts
+before writing, so it was not silently overwritten, but do not fit on it.
 
 **The R environment is installed and locked.** `lmtp` 1.5.4 is verified working on
 system R 4.3.1; `renv.lock` pins 74 packages. CRAN's macOS binaries for R 4.3 are frozen
@@ -43,8 +47,22 @@ system R 4.3.1; `renv.lock` pins 74 packages. CRAN's macOS binaries for R 4.3 ar
 the compiled stack plus `lmtp@1.5.4` from source, which works because `lmtp` is pure R.
 See `code/R_PACKAGES.md`.
 
-`03_lmtp_fit.R` does not exist, and **one estimand question must be answered before it can
-be written**: see "The open question" below.
+`code/03_lmtp_fit.R` **exists and its smoke test passes** (commit `82f8b7a`), with
+gated stages: smoke, diagnostic gate, full expand. The estimand is fully settled; the
+intervention-horizon question that once blocked it was resolved 2026-08-19 and is
+recorded below.
+
+**The live blocker is not the estimand, it is NEE.** 02 raises on medication
+unit-conversion failure, which is deliberate: clifpy 0.4.9 leaves the RAW value in
+`med_dose_converted` when it cannot convert, so 20 ng/kg/min of angiotensin became
+"20 mcg/kg/min" and the x10 norepinephrine-equivalent coefficient turned it into 200.
+`nee_0` reached 8,001 before the guard. Dropping the unconvertible rows is not neutral:
+every angiotensin row here is charted in ng/kg/min, so a drop removes angiotensin from
+NEE for exactly the patients in refractory shock. The conversion `ng/kg/min ->
+mcg/kg/min` is a pure /1000 with no weight involved, yet clifpy refuses it with "cannot
+convert to a weighted unit if weight_kg is missing". The PI is fixing this separately.
+Until it clears: re-run 02, confirm `nee_*` maxima are plausible (< ~3 mcg/kg/min), then
+re-run the gate (~2 h). Tracked as todo 4d.
 
 Two package facts already changed the protocol, both verified by running them. `lmtp_ipw()`
 and `lmtp_sub()` are **defunct** and raise errors, so `estimation.diagnostics` is now
@@ -192,13 +210,19 @@ than silent.
 
 ## Repo conventions
 
-Read `.gitignore`'s header before adding a rule to it. This repo is **private**,
-This repo is **public**, because it ships to consortium sites. `.claude/` and
-`docs/` are therefore **gitignored symlinks** into the private
-`crrt-manuscript-tools` repo (`lmtp-claude/`, `lmtp-docs/`), which holds the
-feasibility audit, the internal planning, and the cohort tutorial. All three carry
-per-site or coordinating-site numbers that cannot be public. Both were purged from
-this repo's history on 2026-08-18; do not restore them by un-ignoring.
+Read `.gitignore`'s header before adding a rule to it. This repo is **public**,
+because it ships to consortium sites. `.claude/` and `docs/` are ordinary local
+directories that are **gitignored and tracked nowhere**: they hold the feasibility
+audit, the internal planning, and the cohort tutorial, all of which carry per-site
+or coordinating-site numbers that cannot be public. Both were purged from this
+repo's history on 2026-08-18; do not restore them by un-ignoring.
+
+Until 2026-08-20 they were symlinks into the private `crrt-manuscript-tools` repo.
+That split one project across two repositories, so the files were moved back here
+and the copies there deleted. **The consequence to know:** these two directories
+are untracked, so `git clean -fdx` will delete them and nothing will complain. The
+2026-08-20 snapshot is recoverable from `crrt-manuscript-tools` history; anything
+written after that date exists only on this machine.
 
 `CLAUDE.md` and `README.md` ship, and are written with no site named.
 

@@ -35,7 +35,7 @@ the tests, and commit all of it together.
    imputed. The charted-zero versus uncharted-gap ambiguity is carried as a
    pre-specified bracket (S1 primary, S2 alongside), not a single choice.
 
-Step 02's build walkthrough is `docs/lmtp_df_build_notes.md` (private repo).
+Step 02's build walkthrough is `docs/lmtp_df_build_notes.md` (local, gitignored).
 `.claude/feasibility_code/tier2_within_patient.py` was the node-assembly prototype;
 it targets the sibling repo's intermediate files and is superseded.
 

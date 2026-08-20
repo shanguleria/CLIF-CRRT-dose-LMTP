@@ -21,8 +21,8 @@ ASSERTED against the node schedule at import rather than trusted to a comment. T
 sibling repo's 04_build_causal_df.py violates exactly this rule by pairing a 0-24h
 mean dose with covariates measured at 24h.
 
-The walkthrough lives in the private repo at
-crrt-manuscript-tools/lmtp-docs/lmtp_df_build_notes.md (symlinked here as docs/).
+The walkthrough is docs/lmtp_df_build_notes.md, which is local and gitignored: it
+carries coordinating-site numbers and does not ship.
 
 DATA SAFETY: this script reads protected patient data. Print aggregates only, never
 rows. Outputs split into output/intermediate_phi/ (patient-level, stays at the site)
